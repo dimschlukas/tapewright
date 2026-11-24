@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import os
 import sys
 import threading
@@ -105,8 +106,11 @@ class Preview(Gtk.DrawingArea):
     Label coordinates are printer dots: x from the left end of the label,
     y from the top of the printable area (same as RenderResult.boxes).
     """
-    PAD = 24
+    PAD = 24            # right padding
+    PAD_L = 52          # left padding (room for the vertical ruler)
+    TOP = 38            # space above the tape (room for the rotation handle)
     HANDLE = 9          # resize handle size in screen pixels
+    ROT_OFF = 22        # distance of the rotation handle above the box
     SNAP_PX = 6         # snapping distance in screen pixels
 
     def __init__(self, win):
@@ -117,6 +121,7 @@ class Preview(Gtk.DrawingArea):
         self.hover = None
         self.drag = None
         self.band = None     # rubber band (x0, y0, x1, y1) in label coordinates
+        self.angle_text = None
         self.guides = []
         self.set_draw_func(self.draw)
         self.set_hexpand(True)
@@ -175,8 +180,11 @@ class Preview(Gtk.DrawingArea):
 
     # ---------------------------------------------------------- geometry
     def tape_height(self):
-        tw = self.win.label.tape_width
-        return R.mm(3.5 if tw == 4 else tw)
+        return R.mm(R.TAPE_MM[self.win.label.tape_width])
+
+    def feed(self):
+        """Blank tape the printer feeds before and after the label (dots)."""
+        return self.win.job.margin_dots
 
     def origin(self, width=None):
         """Screen position of label dot (0, 0)."""
@@ -184,9 +192,29 @@ class Preview(Gtk.DrawingArea):
             return self.drag["origin"]
         res = self.result
         width = width if width is not None else self.get_width()
-        x0 = max(self.PAD, (width - res.length_dots * self.zoom) / 2)
-        py = self.PAD + (self.tape_height() - res.print_height) / 2 * self.zoom
+        z, f = self.zoom, self.feed()
+        total = (res.length_dots + 2 * f) * z
+        left = max(self.PAD_L, (width - total) / 2)
+        x0 = left + f * z
+        py = self.TOP + (self.tape_height() - res.print_height) / 2 * z
         return x0, py
+
+    def _sel_box_screen(self):
+        res, sel = self.result, self.win.sel
+        if (not res or len(self.win.selected) != 1 or not (0 <= sel < len(res.boxes))
+                or not res.boxes[sel]):
+            return None
+        x, y, w, h = res.boxes[sel]
+        x0, py = self.origin()
+        z = self.zoom
+        return x0 + x * z, py + y * z, w * z, h * z
+
+    def on_rot_handle(self, sx, sy):
+        b = self._sel_box_screen()
+        if not b:
+            return False
+        hx, hy = b[0] + b[2] / 2, b[1] - self.ROT_OFF
+        return (sx - hx) ** 2 + (sy - hy) ** 2 <= 8 ** 2
 
     def to_label(self, sx, sy):
         x0, py = self.origin()
@@ -219,8 +247,9 @@ class Preview(Gtk.DrawingArea):
 
     def update_size(self):
         L = self.result.length_dots if self.result else 100
-        self.set_content_width(int(L * self.zoom + 2 * self.PAD))
-        self.set_content_height(int(self.tape_height() * self.zoom + 2 * self.PAD + 22))
+        z = self.zoom
+        self.set_content_width(int((L + 2 * self.feed()) * z + self.PAD_L + self.PAD))
+        self.set_content_height(int(self.TOP + self.tape_height() * z + 36))
 
     # ---------------------------------------------------------- snapping
     def _targets(self, skip):
@@ -263,11 +292,21 @@ class Preview(Gtk.DrawingArea):
         win = self.win
         base = {"started": False, "origin": self.origin(), "shift": self.result.x_shift,
                 "toggle": toggle, "start": (lx, ly)}
+        if self.on_rot_handle(sx, sy):
+            idx = win.sel
+            b = self._sel_box_screen()
+            cx, cy = b[0] + b[2] / 2, b[1] + b[3] / 2
+            el = win.label.elements[idx]
+            self.drag = dict(base, mode="rotate", idx=idx, center=(cx, cy), pointer=(sx, sy),
+                             angle0=math.degrees(math.atan2(sx - cx, cy - sy)),
+                             rot0=float(el.rotation))
+            return
         if self.on_handle(sx, sy):
             idx = win.sel
             el = win.label.elements[idx]
             self.drag = dict(base, mode="resize", idx=idx, box=self.result.boxes[idx],
-                             size=getattr(el, "size", None))
+                             size=getattr(el, "size", None),
+                             unrot_h=(self.result.sizes[idx] or (0, 4))[1])
             return
         idx = self.hit(lx, ly)
         if idx is None:
@@ -297,6 +336,10 @@ class Preview(Gtk.DrawingArea):
             d["started"] = True
             if d["mode"] != "band" and self.win.ensure_free():
                 d["shift"] = self.result.x_shift
+            if d["mode"] == "rotate":
+                i = d["idx"]
+                d["box"] = self.result.boxes[i]
+                d["size"] = self.result.sizes[i]
         z = self.zoom
         if d["mode"] == "band":
             x0, y0 = d["start"]
@@ -306,6 +349,18 @@ class Preview(Gtk.DrawingArea):
         no_snap, _ = self._mods(gesture)
         snap = not no_snap
         el = self.win.label.elements[d["idx"]]
+        if d["mode"] == "rotate":
+            cx, cy = d["center"]
+            px, py_ = d["pointer"][0] + ox, d["pointer"][1] + oy
+            ang = d["rot0"] + math.degrees(math.atan2(px - cx, cy - py_)) - d["angle0"]
+            if snap:
+                near = round(ang / 15) * 15
+                ang = near if abs(ang - near) <= 4 else round(ang)
+            ang %= 360
+            self.win.rotate_element(d["idx"], ang, d["box"], d["size"], d["shift"])
+            self.angle_text = f"{ang:.1f}°".replace(".0°", "°")
+            self.win.live_changed(x_shift=d["shift"])
+            return
         bx, by, bw, bh = d["box"]
         shift = d["shift"]
         self.guides = []
@@ -326,24 +381,25 @@ class Preview(Gtk.DrawingArea):
                 e.x_mm = (round(x + dx) - shift) / R.DOTS_PER_MM
                 e.y_mm = round(y + dy) / R.DOTS_PER_MM
         else:
-            axis = R.size_axis(el)
-            scale = ((bw + ox / z) / max(bw, 1) + (bh + oy / z) / max(bh, 1)) / 2
-            base = bw if axis == "w" else bh
-            new = max(4.0, base * scale)
-            if snap and axis == "h":
+            scale = max(0.05, ((bw + ox / z) / max(bw, 1) + (bh + oy / z) / max(bh, 1)) / 2)
+            if snap and R.scalable(el):
                 _, ys = self._targets({d["idx"]})
-                sy = self._snap([by + new], ys)
+                sy = self._snap([by + bh * scale], ys)
                 if sy:
-                    new = max(4.0, new + sy[0])
+                    scale = max(0.05, (bh * scale + sy[0]) / max(bh, 1))
                     self.guides.append(("y", sy[1]))
             if el.kind == "text" and not el.auto_size and d["size"]:
-                el.size = round(d["size"] * new / max(base, 1), 1)
-            el.h_mm = round(new) / R.DOTS_PER_MM
+                el.size = round(max(1.0, d["size"] * scale), 1)
+            elif R.scalable(el):
+                el.h_mm = round(max(4.0, bh * scale)) / R.DOTS_PER_MM
+            else:
+                el.h_mm = round(max(4.0, d["unrot_h"] * scale)) / R.DOTS_PER_MM
         self.win.live_changed(x_shift=shift)
 
     def _drag_end(self, gesture, ox, oy):
         d, self.drag = self.drag, None
         self.guides = []
+        self.angle_text = None
         win = self.win
         if d and d["mode"] == "band":
             band, self.band = self.band, None
@@ -380,7 +436,10 @@ class Preview(Gtk.DrawingArea):
     def _motion(self, ctl, sx, sy):
         if self.drag or not self.result:
             return
-        if self.on_handle(sx, sy):
+        if self.on_rot_handle(sx, sy):
+            self.set_cursor_from_name("grab")
+            hover = self.win.sel
+        elif self.on_handle(sx, sy):
             self.set_cursor_from_name("nwse-resize")
             hover = self.win.sel
         else:
@@ -433,16 +492,43 @@ class Preview(Gtk.DrawingArea):
         tape_h = self.tape_height()
         L = res.length_dots
         x0, py = self.origin(width)
-        y0 = self.PAD
+        y0 = self.TOP
+        f = self.feed()
+        tx0, tx1 = x0 - f * z, x0 + (L + f) * z      # cut edges of the printed piece
         tape_rgb, ink_rgb = self.win.tape_colors()
+        fg = self.get_color()
 
-        # tape body + shadow
+        # tape body (whole cut piece) + shadow
         cr.set_source_rgba(0, 0, 0, 0.18)
-        cr.rectangle(x0 + 3, y0 + 3, L * z, tape_h * z)
+        cr.rectangle(tx0 + 3, y0 + 3, tx1 - tx0, tape_h * z)
         cr.fill()
         cr.set_source_rgb(*tape_rgb)
-        cr.rectangle(x0, y0, L * z, tape_h * z)
+        cr.rectangle(tx0, y0, tx1 - tx0, tape_h * z)
         cr.fill()
+        # feed margins: blank tape the printer adds before and after the label
+        if f > 0:
+            for fx in (tx0, x0 + L * z):
+                cr.save()
+                cr.rectangle(fx, y0, f * z, tape_h * z)
+                cr.clip()
+                cr.set_source_rgba(fg.red, fg.green, fg.blue, 0.13)
+                cr.set_line_width(1)
+                k = -tape_h * z
+                while k < f * z:
+                    cr.move_to(fx + k, y0 + tape_h * z)
+                    cr.line_to(fx + k + tape_h * z, y0)
+                    k += 6
+                cr.stroke()
+                cr.restore()
+        # cut lines
+        cr.set_source_rgba(fg.red, fg.green, fg.blue, 0.55)
+        cr.set_line_width(1)
+        cr.set_dash([3, 3])
+        for cx_ in (round(tx0) + 0.5, round(tx1) - 0.5):
+            cr.move_to(cx_, y0 - 6)
+            cr.line_to(cx_, y0 + tape_h * z + 6)
+        cr.stroke()
+        cr.set_dash([])
         # printable area outline
         cr.set_source_rgba(0.2, 0.5, 1.0, 0.35)
         cr.set_line_width(1)
@@ -490,6 +576,25 @@ class Preview(Gtk.DrawingArea):
                 cr.set_source_rgba(acc.red, acc.green, acc.blue, 1)
                 cr.set_line_width(1.5)
                 cr.stroke()
+                # rotation handle
+                hx, hy = rx + rw / 2, ry + 1.5 - self.ROT_OFF
+                cr.move_to(hx, ry)
+                cr.line_to(hx, hy + 6)
+                cr.set_line_width(1)
+                cr.stroke()
+                cr.arc(hx, hy, 6, 0, 2 * math.pi)
+                cr.set_source_rgb(1, 1, 1)
+                cr.fill_preserve()
+                cr.set_source_rgba(acc.red, acc.green, acc.blue, 1)
+                cr.set_line_width(1.5)
+                cr.stroke()
+                cr.arc(hx, hy, 2.5, -2.4, 1.2)
+                cr.stroke()
+                if self.angle_text:
+                    cr.select_font_face("Sans")
+                    cr.set_font_size(12)
+                    cr.move_to(hx + 10, hy + 4)
+                    cr.show_text(self.angle_text)
         # rubber band
         if self.band:
             bx0, bx1 = sorted((self.band[0], self.band[2]))
@@ -516,25 +621,78 @@ class Preview(Gtk.DrawingArea):
         cr.stroke()
         cr.set_dash([])
 
-        # ruler (mm)
+        self._draw_rulers(cr, tx0, tx1, y0, tape_h * z, x0, py, res)
+
+    def _draw_rulers(self, cr, tx0, tx1, y0, tape_px, x0, py, res):
+        """Rulers in real millimetres: horizontal from the left cut edge of the
+        printed piece, vertical from the top edge of the tape."""
+        z = self.zoom
+        px_mm = z * R.DOTS_PER_MM
         fg = self.get_color()
-        cr.set_source_rgba(fg.red, fg.green, fg.blue, 0.7)
-        ry = y0 + tape_h * z + 6
-        total_mm = res.length_mm
-        cr.set_line_width(1)
         cr.select_font_face("Sans")
         cr.set_font_size(10)
+        cr.set_line_width(1)
+
+        def num_step(min_px):
+            for st in (1, 2, 5, 10, 20, 50, 100):
+                if st * px_mm >= min_px:
+                    return st
+            return 100
+
+        # horizontal
+        cr.set_source_rgba(fg.red, fg.green, fg.blue, 0.75)
+        ry = y0 + tape_px + 6
+        total = (tx1 - tx0) / px_mm
+        step = num_step(34)
         m = 0
-        while m <= total_mm + 0.01:
-            x = round(x0 + R.mm(m) * z) + 0.5
-            tick = 8 if m % 10 == 0 else (5 if m % 5 == 0 else 2.5)
-            if z * R.DOTS_PER_MM >= 3 or m % 5 == 0:
+        while m <= total + 1e-6:
+            x = round(tx0 + m * px_mm) + 0.5
+            tick = 8 if m % step == 0 else (5 if m % 5 == 0 else 3)
+            if px_mm >= 3 or m % 5 == 0:
                 cr.move_to(x, ry)
                 cr.line_to(x, ry + tick)
-            if m % 10 == 0 and m > 0:
-                cr.move_to(x + 2, ry + 16)
-                cr.show_text(f"{m}")
+            if m % step == 0:
+                t = f"{m}"
+                ext = cr.text_extents(t)
+                cr.move_to(x - ext.x_advance / 2, ry + 20)
+                cr.show_text(t)
             m += 1
+        cr.stroke()
+        # total length mark at the far cut edge
+        t = f"{total:.1f} mm"
+        ext = cr.text_extents(t)
+        cr.set_source_rgba(fg.red, fg.green, fg.blue, 0.55)
+        cr.move_to(tx1 - ext.x_advance, y0 - 8)
+        cr.show_text(t)
+
+        # vertical
+        cr.set_source_rgba(fg.red, fg.green, fg.blue, 0.75)
+        rx = tx0 - 6
+        tape_mm = R.TAPE_MM[self.win.label.tape_width]
+        vstep = num_step(14)
+        m = 0
+        while m <= tape_mm + 1e-6:
+            y = round(y0 + m * px_mm) + 0.5
+            tick = 7 if m % vstep == 0 else 3
+            if px_mm >= 3 or m % vstep == 0:
+                cr.move_to(rx, y)
+                cr.line_to(rx - tick, y)
+            if m % vstep == 0:
+                t = f"{m}"
+                ext = cr.text_extents(t)
+                cr.move_to(rx - 9 - ext.x_advance, y + ext.height / 2)
+                cr.show_text(t)
+            m += 1
+        if tape_mm != int(tape_mm):          # 3.5 mm tape: mark the far edge too
+            y = round(y0 + tape_px) + 0.5
+            cr.move_to(rx, y)
+            cr.line_to(rx - 7, y)
+        cr.stroke()
+        # printable band on the vertical ruler
+        cr.set_source_rgba(0.2, 0.5, 1.0, 0.6)
+        cr.set_line_width(2)
+        cr.move_to(rx + 2, py)
+        cr.line_to(rx + 2, py + res.print_height * z)
         cr.stroke()
 
 
@@ -1052,24 +1210,30 @@ class MainWindow(Adw.ApplicationWindow):
             pos += b[k + 2] + gap
         self._commit_geometry()
 
-    def rotate(self, delta):
-        """Rotate the selection by +-90 degrees, each element around its centre."""
-        old = self._boxes()
-        if not old:
+    def rotate_element(self, i, angle, box, size, shift):
+        """Set element i's rotation. In the free layout the element keeps its
+        centre and its content size (the box grows or shrinks around it)."""
+        el = self.label.elements[i]
+        el.rotation = round(float(angle) % 360, 2)
+        if self.label.layout != "free" or not box or not size:
             return
-        for i in old:
+        bw, bh = R.rotated_size(size[0], size[1], el.rotation)
+        if R.scalable(el):
+            el.h_mm = bh / R.DOTS_PER_MM
+        cx, cy = box[0] + box[2] / 2, box[1] + box[3] / 2
+        el.x_mm = (round(cx - bw / 2) - shift) / R.DOTS_PER_MM
+        el.y_mm = round(cy - bh / 2) / R.DOTS_PER_MM
+
+    def rotate(self, delta=None, absolute=None):
+        """Rotate the selection by delta degrees (or to an absolute angle)."""
+        boxes = self._boxes()
+        if not boxes:
+            return
+        res = self.result
+        for i, box in boxes.items():
             el = self.label.elements[i]
-            el.rotation = (el.rotation + delta) % 360
-        if self.label.layout == "free":
-            # keep each element's centre where it was
-            shift = self.result.x_shift
-            res = R.render(self.label, n=self.counter_start, x_shift=shift)
-            for i, (x, y, w, h) in old.items():
-                nb = res.boxes[i]
-                if nb:
-                    el = self.label.elements[i]
-                    el.x_mm = (round(x + w / 2 - nb[2] / 2) - shift) / R.DOTS_PER_MM
-                    el.y_mm = round(y + h / 2 - nb[3] / 2) / R.DOTS_PER_MM
+            angle = absolute if absolute is not None else float(el.rotation) + delta
+            self.rotate_element(i, angle, box, res.sizes[i], res.x_shift)
         self.build_element_page()
         self._commit_geometry()
 
@@ -1121,8 +1285,10 @@ class MainWindow(Adw.ApplicationWindow):
         self.preview.set_result(res)
         tw = self.label.tape_width
         pins = TAPE_GEOMETRY[tw][0]
-        info = (f"Label length {res.length_mm:.1f} mm  ·  {TAPE_LABEL[tw]} tape  ·  "
-                f"printable height {pins} dots ({pins / R.DOTS_PER_MM:.1f} mm)")
+        feed = self.job.margin_dots / R.DOTS_PER_MM
+        info = (f"Label {res.length_mm:.1f} mm  ·  cut piece {res.length_mm + 2 * feed:.1f} mm "
+                f"(incl. {feed:.1f} mm feed at each end)  ·  {TAPE_LABEL[tw]} tape  ·  "
+                f"printable height {pins / R.DOTS_PER_MM:.1f} mm")
         if self.label.uses_counter():
             info += f"  ·  preview shows n = {self.counter_start}"
         if res.warnings:
@@ -1338,46 +1504,61 @@ class MainWindow(Adw.ApplicationWindow):
         free = self.label.layout == "free"
         if free:
             g = group("Position", "Free layout: drag in the preview or enter exact values. "
-                                  "X is measured from the left end of the label, Y from the "
-                                  "top of the printable area.")
+                                  "Positions are measured like the rulers.")
         else:
             g = group("Placement")
 
-        def on_rot(i):
-            delta = (R.ROTATIONS[i] - el.rotation) % 360
-            if delta:
-                self.rotate(delta)
-        g.add(combo_row("Rotation", ["0°", "90° clockwise", "180°", "90° counter-clockwise"],
-                        R.ROTATIONS.index(el.rotation) if el.rotation in R.ROTATIONS else 0,
-                        on_rot))
+        rot = spin_row("Rotation (°)", float(el.rotation), 0, 359.9, 1, 1,
+                       lambda v: abs(v - float(el.rotation)) > 1e-6 and self.rotate(absolute=v),
+                       "Clockwise. Drag the round handle above the element; Shift = no snapping")
+        rot.set_wrap(True)
+        g.add(rot)
+        self.pos_rows.append((lambda: float(el.rotation), rot))
         if not free:
             return g
         i = self.sel
 
+        # X/Y are shown like the rulers: from the left cut edge of the printed
+        # piece and from the top edge of the tape
+        def off_x():
+            return self.job.margin_dots
+
+        def off_y():
+            res = self.result
+            return (R.mm(R.TAPE_MM[self.label.tape_width]) - res.print_height) / 2
+
         def box(k):
             res = self.result
             b = res.boxes[i] if res and i < len(res.boxes) else None
-            return b[k] / R.DOTS_PER_MM if b else None
+            if not b:
+                return None
+            return (b[k] + (off_x() if k == 0 else off_y())) / R.DOTS_PER_MM
 
         def set_x(v):
-            el.x_mm = v - self.result.x_shift / R.DOTS_PER_MM
+            el.x_mm = (round(v * R.DOTS_PER_MM - off_x()) - self.result.x_shift) / R.DOTS_PER_MM
+            self.changed()
+
+        def set_y(v):
+            el.y_mm = round(v * R.DOTS_PER_MM - off_y()) / R.DOTS_PER_MM
             self.changed()
         auto_len = not self.label.length_mm
-        x0 = box(0)
-        xrow = spin_row("X (mm)", el.x_mm if x0 is None else x0, -500, 2000, 0.1, 2, set_x,
-                        "Automatic length: the label starts at the leftmost element"
-                        if auto_len else None)
-        yrow = spin_row("Y (mm)", el.y_mm, -30, 30, 0.1, 2, self._set(el, "y_mm"))
+        xv, yv = box(0), box(1)
+        xrow = spin_row("X (mm)", xv if xv is not None else el.x_mm, -500, 2000, 0.1, 2, set_x,
+                        "From the left cut edge. Automatic length: the label starts at the "
+                        "leftmost element" if auto_len else "From the left cut edge")
+        yrow = spin_row("Y (mm)", yv if yv is not None else el.y_mm, -30, 60, 0.1, 2, set_y,
+                        "From the top edge of the tape")
         g.add(xrow)
         g.add(yrow)
-        self.pos_rows += [(lambda: box(0), xrow), (lambda: el.y_mm, yrow)]
+        self.pos_rows += [(lambda: box(0), xrow), (lambda: box(1), yrow)]
         if el.kind == "text" and not el.auto_size:
             srow = spin_row("Size (pt)", el.size, 2, 200, 0.5, 1, self._set(el, "size"),
                             "The box follows the font size")
             g.add(srow)
             self.pos_rows.append((lambda: el.size, srow))
         else:
-            title = "Width (mm)" if R.size_axis(el) == "w" else "Height (mm)"
+            title = {"barcode": "Bar length (mm)", "spacer": "Line length (mm)"}.get(
+                el.kind, "Height (mm)") if not R.scalable(el) else "Height (mm)"
             hrow = spin_row(title, el.h_mm, 0.3, 30, 0.1, 2, self._set(el, "h_mm"))
             g.add(hrow)
             self.pos_rows.append((lambda: el.h_mm, hrow))
@@ -1645,7 +1826,7 @@ class MainWindow(Adw.ApplicationWindow):
         g2.add(switch_row("Chain printing", job.chain, lambda v: setattr(job, "chain", v),
                           "Don't feed & cut after the last label (saves tape on the next job)"))
         g2.add(spin_row("Feed margin (mm)", job.margin_dots / R.DOTS_PER_MM, 0.5, 30, 0.5, 1,
-                        lambda v: setattr(job, "margin_dots", round(R.mm(v))),
+                        self._on_feed,
                         "Blank tape before and after the label"))
         g3 = group()
         pb = Gtk.Button(label="Print", halign=Gtk.Align.CENTER)
@@ -1653,7 +1834,13 @@ class MainWindow(Adw.ApplicationWindow):
         pb.add_css_class("pill")
         pb.connect("clicked", lambda *_: self.do_print())
         g3.add(pb)
-        self._page(self.print_page, [g1, g2, g3])
+        g4 = group("Calibration", "Prints a 100 mm ruler. With a correct printer the distance "
+                                  "from the 0 line to the 100 line is exactly 100 mm, and the "
+                                  "blank tape at each end equals the feed margin.")
+        cb = Gtk.Button(label="Print calibration ruler", halign=Gtk.Align.START)
+        cb.connect("clicked", lambda *_: self.print_ruler())
+        g4.add(cb)
+        self._page(self.print_page, [g1, g2, g3, g4])
 
     def _on_copies(self, v):
         self.copies = int(v)
@@ -1664,6 +1851,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.copies = int(spin.get_value())
         if hasattr(self, "copies_row") and int(self.copies_row.get_value()) != self.copies:
             self.copies_row.set_value(self.copies)
+
+    def _on_feed(self, v):
+        self.job.margin_dots = round(R.mm(v))
+        self.preview.update_size()
+        self.schedule_render()
 
     def _on_counter(self, v):
         self.counter_start = int(v)
@@ -1751,6 +1943,32 @@ class MainWindow(Adw.ApplicationWindow):
             self._building = False
             self.schedule_render()
             self.toast_msg(f"Switched to {TAPE_LABEL[st.tape_width]} tape")
+
+    def print_ruler(self):
+        if self.printing:
+            return
+        tw = (self.status.tape_width if self.status and self.status.tape_width
+              else self.label.tape_width)
+        job = copy.copy(self.job)
+        job.tape_width = tw
+        self.printing = True
+        self.print_btn.set_sensitive(False)
+
+        def work():
+            err = None
+            try:
+                lines = R.to_raster_lines(R.ruler_label(tw), tw)
+                with self.dev_lock:
+                    p = Printer(open_printer())
+                    try:
+                        p.print_pages([lines], job,
+                                      progress=lambda m: GLib.idle_add(self.status_label.set_text, m))
+                    finally:
+                        p.close()
+            except Exception as e:  # noqa: BLE001
+                err = str(e)
+            GLib.idle_add(self._print_done, err, 1, False)
+        threading.Thread(target=work, daemon=True).start()
 
     def do_print(self):
         if self.printing:

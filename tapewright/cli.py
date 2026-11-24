@@ -42,6 +42,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="tapewright", description="Label tool for Brother P-touch printers (PT-P700 and compatible)")
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("status", help="show printer and tape status")
+    cal = sub.add_parser("calibrate", help="print a 100 mm ruler to check the printed length")
+    cal.add_argument("--length", type=float, default=100.0, help="ruler length in mm")
+    cal.add_argument("--margin", type=float, default=2.0, help="feed margin mm")
     g = sub.add_parser("gui", help="start the graphical editor (default)")
     g.add_argument("file", nargs="?", help="label file to open")
     for name in ("print", "render"):
@@ -81,6 +84,22 @@ def main(argv=None):
                 print(st.summary())
             finally:
                 p.close()
+            return 0
+
+        if a.cmd == "calibrate":
+            p = Printer(open_printer())
+            try:
+                st = p.status()
+                tw = st.tape_width or 12
+                r = R.ruler_label(tw, a.length)
+                opts = JobOptions(tape_width=tw, margin_dots=round(R.mm(a.margin)))
+                p.print_pages([R.to_raster_lines(r, tw)], opts,
+                              progress=lambda m: print(m, file=sys.stderr))
+            finally:
+                p.close()
+            print(f"Printed a {a.length:g} mm calibration ruler with {a.margin:g} mm feed margin.")
+            print("Measure: (1) the whole cut piece, (2) blank tape before the 0 line,")
+            print(f"(3) the distance from the 0 line to the {a.length:g} line, (4) blank tape after it.")
             return 0
 
         lab = _label_from_args(a)

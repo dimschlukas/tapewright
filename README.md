@@ -26,8 +26,16 @@ Supported tapes are TZe tapes 3.5, 6, 9, 12, 18 and 24 mm wide.
     Elements snap to the tape centre and edges and to other elements; hold Shift to turn snapping off.
     Arrow keys nudge (Shift = 1 mm), Delete removes, and the right-click menu has front/back and centring.
   - The first drag switches a label to free layout without moving anything.
-- **Rotation** in 90° steps (Ctrl+R / Ctrl+Shift+R), in either layout.
-  Rotated auto-size text fits its length to the tape, which suits vertical labels.
+- **Rotation** to any angle, in either layout:
+  - drag the round handle above a selected element (snaps to 15°; Shift for free rotation);
+  - type an exact angle;
+  - or rotate by 90° with Ctrl+R / Ctrl+Shift+R.
+  In free layout an element keeps its size and centre while rotating.
+- **Rulers** in real millimetres:
+  - horizontal from the cut edge of the printed piece, including the printer's feed margin at each end;
+  - vertical from the top edge of the tape, with the printable band marked.
+  The X/Y position fields use the same reference.
+  *Print → Print calibration ruler* (or `tapewright calibrate`) checks your printer.
 - **Multi-select:** Ctrl/Shift+click, drag a box, or Ctrl+A.
   - Move several elements together.
   - Align left, centre, right, top, middle or bottom; distribute three or more evenly.

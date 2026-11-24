@@ -35,10 +35,29 @@ def mm(v):
 # label's layout is "free": position of the element box's top-left corner
 # (x from the label's left end, y from the top of the printable area) and the
 # box height. h_mm == 0 means "not placed yet".
-# `rotation` (0/90/180/270, clockwise) applies in both layouts.
+# `rotation` (degrees clockwise, any angle) applies in both layouts.
 
 PLACEMENT_FIELDS = ("x_mm", "y_mm", "h_mm", "rotation")
-ROTATIONS = (0, 90, 180, 270)
+TAPE_MM = {4: 3.5, 6: 6.0, 9: 9.0, 12: 12.0, 18: 18.0, 24: 24.0}
+
+
+def _sc(angle):
+    """|sin|, |cos| of an angle in degrees, exact for multiples of 90."""
+    a = float(angle) % 360
+    if a % 90 == 0:
+        return (0.0, 1.0) if a % 180 == 0 else (1.0, 0.0)
+    r = math.radians(a)
+    return abs(math.sin(r)), abs(math.cos(r))
+
+
+def rotated_size(w, h, angle):
+    """Axis-aligned bounding box (w, h) of a w x h rectangle rotated by angle."""
+    s, c = _sc(angle)
+    if s == 0:
+        return w, h
+    if c == 0:
+        return h, w
+    return w * c + h * s, w * s + h * c
 
 @dataclass
 class TextElement:
@@ -254,29 +273,29 @@ def _rect(r):
     return r.x / Pango.SCALE, r.y / Pango.SCALE, r.width / Pango.SCALE, r.height / Pango.SCALE
 
 
-def _text_ref(layout, el, along):
-    """Dimension that auto-size fits to the available height: the text's
-    length when it is rotated by 90/270 degrees, otherwise its height."""
+def _text_ref(layout, el):
+    """Height of the text's rotated bounding box; auto-size fits this to the
+    available height (plain height at 0 degrees, the text's length at 90)."""
     ink, logical = layout.get_pixel_extents()
-    if along:
-        return max(ink.x + ink.width, logical.x + logical.width) - min(ink.x, logical.x)
-    return ink.height if el.fit_glyphs else logical.height
+    w = max(ink.x + ink.width, logical.x + logical.width) - min(ink.x, logical.x)
+    h = ink.height if el.fit_glyphs else logical.height
+    return rotated_size(w, h, el.rotation)[1]
 
 
 def _measure_text(cr, el: TextElement, avail_h, ctx):
     text = expand(el.text, ctx.n)
     if not text.strip():
         return 0, 0, None
-    along = el.rotation % 180 == 90
+    rotated = float(el.rotation) % 360 != 0
     if el.auto_size:
         probe = _make_layout(cr, el, 100.0, text)
-        ref = _text_ref(probe, el, along)
+        ref = _text_ref(probe, el)
         if ref <= 0:
             return 0, 0, None
         size = 100.0 * avail_h / ref
         layout = _make_layout(cr, el, size, text)
         # correct for non-linear hinting
-        ref = _text_ref(layout, el, along)
+        ref = _text_ref(layout, el)
         if ref > avail_h:
             size *= avail_h / ref
             layout = _make_layout(cr, el, size, text)
@@ -285,7 +304,7 @@ def _measure_text(cr, el: TextElement, avail_h, ctx):
     ink, logical = layout.get_extents()
     ix, iy, iw, ih = _rect(ink)
     lx, ly, lw, lh = _rect(logical)
-    if not el.auto_size and not ctx.free and not along and lh > avail_h + 0.5:
+    if not el.auto_size and not ctx.free and not rotated and lh > avail_h + 0.5:
         ctx.warnings.append(f"Text “{text[:20]}” is taller than the tape")
     x0 = min(ix, lx)
     width = max(ix + iw, lx + lw) - x0
@@ -491,44 +510,41 @@ class RenderResult:
     # element starts at the start padding. x_shift (dots) was added to every
     # element's x_mm; to store a label x back: x_mm = (x - x_shift) / DOTS_PER_MM
     x_shift: float = 0
+    sizes: list = field(default_factory=list)   # unrotated (w, h) per element
 
     @property
     def length_mm(self):
         return self.length_dots / DOTS_PER_MM
 
 
-def size_axis(el):
-    """Which side of an element's box h_mm controls in the free layout.
-
-    Normally the box height. Rotated by 90/270 degrees, a barcode, spacer or
-    fixed-size text has a fixed length, so h_mm then sets the box width."""
-    if el.rotation % 180 == 90 and (el.kind in ("barcode", "spacer") or
-                                    (el.kind == "text" and not el.auto_size)):
-        return "w"
-    return "h"
+def scalable(el):
+    """Elements whose size follows h_mm as the height of their (rotated) box.
+    For the others (barcode, spacer) h_mm is their unrotated height: bar or
+    line length. Fixed-size text follows its font size."""
+    return el.kind in ("image", "qr") or (el.kind == "text" and el.auto_size)
 
 
 def _measure(scr, el, el_avail, ctx):
     """Measure an element. Returns (box_w, box_h, w, h, draw, rotation) where box_*
     is the rotated bounding box and w/h the unrotated size passed to draw."""
-    rot = el.rotation % 360 if el.rotation in ROTATIONS else 0
-    along = rot % 180 == 90
+    ang = float(el.rotation) % 360
     w, h, draw = _MEASURE[el.kind](scr, el, el_avail, ctx)
     if draw is None or w <= 0:
         return None
-    if along:
-        target = el_avail * _pct(el, ctx) / 100
-        if el.kind == "image" and abs(w - target) > 0.5:
-            # scale the picture so that its rotated height fits the target
-            again = _MEASURE["image"](scr, el, el_avail * target / w, ctx)
-            if again[2] is not None:
-                w, h, draw = again
-        elif el.kind in ("barcode", "spacer") or (el.kind == "text" and not el.auto_size):
-            if w > el_avail + 0.5 and not ctx.free:
-                ctx.warnings.append(f"Rotated {ELEMENT_NAMES[el.kind].lower()} is longer "
-                                    f"than the tape is wide")
-        return h, w, w, h, draw, rot
-    return w, h, w, h, draw, rot
+    if not ang:
+        return w, h, w, h, draw, 0
+    target = el_avail * _pct(el, ctx) / 100
+    bh = rotated_size(w, h, ang)[1]
+    if (el.kind == "image" or (el.kind == "qr" and ang % 90)) and abs(bh - target) > 0.5:
+        # scale so that the rotated bounding box fits the target height
+        again = _MEASURE[el.kind](scr, el, el_avail * target / bh, ctx)
+        if again[2] is not None:
+            w, h, draw = again
+    elif not scalable(el) and bh > el_avail + 0.5 and not ctx.free:
+        ctx.warnings.append(f"Rotated {ELEMENT_NAMES[el.kind].lower()} is taller "
+                            f"than the tape is wide")
+    bw, bh = rotated_size(w, h, ang)
+    return bw, bh, w, h, draw, ang
 
 
 def render(label: Label, n: int = 1, x_shift: float | None = None) -> RenderResult:
@@ -557,6 +573,7 @@ def render(label: Label, n: int = 1, x_shift: float | None = None) -> RenderResu
     side_end = frame + mm(label.pad_end_mm)
     fixed = bool(label.length_mm and label.length_mm > 0)
     boxes = [None] * len(label.elements)
+    sizes = [None] * len(label.elements)
     items = []    # (index, box_w, box_h, w, h, draw, rotation)
     for i, el in enumerate(label.elements):
         el_avail = avail
@@ -565,6 +582,7 @@ def render(label: Label, n: int = 1, x_shift: float | None = None) -> RenderResu
         m = _measure(scr, el, el_avail, ctx)
         if m:
             items.append((i, *m))
+            sizes[i] = (m[2], m[3])
 
     shift = 0
     if ctx.free:
@@ -672,19 +690,19 @@ def render(label: Label, n: int = 1, x_shift: float | None = None) -> RenderResu
     if label.invert:
         img = ImageOps.invert(img)
     return RenderResult(img, L, H, ctx.warnings, boxes, top, avail, frame,
-                        side_start, side_end, shift)
+                        side_start, side_end, shift, sizes)
 
 
 def freeze_layout(label: Label, result: RenderResult):
     """Switch a label to the free layout, keeping every element where the
     current (flow) layout put it."""
-    for el, box in zip(label.elements, result.boxes):
+    for el, box, size in zip(label.elements, result.boxes, result.sizes):
         if box is None:
             continue
         x, y, w, h = box
         el.x_mm = round((x - result.x_shift) / DOTS_PER_MM, 4)
         el.y_mm = round(y / DOTS_PER_MM, 4)
-        el.h_mm = round(max(w if size_axis(el) == "w" else h, 2) / DOTS_PER_MM, 4)
+        el.h_mm = round(max(h if scalable(el) else size[1], 2) / DOTS_PER_MM, 4)
     label.layout = "free"
 
 
@@ -699,3 +717,38 @@ def to_raster_lines(result: RenderResult, tape_width: int) -> list[bytes]:
     raw = cols.tobytes()
     bpl = HEAD_PINS // 8
     return [raw[i * bpl:(i + 1) * bpl] for i in range(result.length_dots)]
+
+
+def ruler_label(tape_width: int, length_mm: float = 100.0) -> RenderResult:
+    """A calibration label: a millimetre ruler across the whole printable
+    height, with marks every 1/5/10 mm and a full-height line at 0 and the end."""
+    pins, _ = TAPE_GEOMETRY[tape_width]
+    L = round(mm(length_mm)) + 1
+    surf = cairo.ImageSurface(cairo.FORMAT_RGB24, L, pins)
+    cr = cairo.Context(surf)
+    cr.set_source_rgb(1, 1, 1)
+    cr.paint()
+    cr.set_source_rgb(0, 0, 0)
+    cr.set_antialias(cairo.ANTIALIAS_NONE)
+    for m in range(int(length_mm) + 1):
+        x = round(mm(m))
+        if m in (0, int(length_mm)):
+            h = pins
+        elif m % 10 == 0:
+            h = pins * 0.55
+        elif m % 5 == 0:
+            h = pins * 0.35
+        else:
+            h = pins * 0.2
+        cr.rectangle(min(x, L - 1), pins - h, 1, h)
+        cr.fill()
+        if m % 10 == 0 and 0 < m < length_mm:
+            tel = TextElement(text=str(m), font="Sans Bold")
+            lay = _make_layout(cr, tel, max(3.0, pins * 0.3 * 72 / DPI), str(m))
+            ink, lg = lay.get_pixel_extents()
+            cr.move_to(x - lg.width / 2, 0)
+            PangoCairo.show_layout(cr, lay)
+    surf.flush()
+    img = Image.frombuffer("RGBX", (L, pins), bytes(surf.get_data()), "raw", "BGRX",
+                           surf.get_stride(), 1).convert("L").point(lambda v: 255 if v >= 128 else 0)
+    return RenderResult(img, L, pins, [], [], 0, pins, 0)

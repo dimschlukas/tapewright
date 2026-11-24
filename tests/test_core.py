@@ -192,6 +192,36 @@ class FreeLayoutTest(unittest.TestCase):
         self.assertLess(b[0][0] + b[0][2], b[1][0])
 
 
+class AnyAngleTest(unittest.TestCase):
+    def test_rotated_size(self):
+        self.assertEqual(R.rotated_size(10, 4, 0), (10, 4))
+        self.assertEqual(R.rotated_size(10, 4, 90), (4, 10))
+        self.assertEqual(R.rotated_size(10, 4, 180), (10, 4))
+        w, h = R.rotated_size(10, 10, 45)
+        self.assertAlmostEqual(w, 14.142, places=2)
+        self.assertAlmostEqual(h, 14.142, places=2)
+
+    def test_auto_size_fits_rotated_box(self):
+        for ang in (15, 30, 45, 60, 330):
+            lab = R.Label(tape_width=24, elements=[R.TextElement(text="Angle", rotation=ang),
+                                                   R.ImageElement(path="", rotation=ang)])
+            res = R.render(lab)
+            x, y, w, h = res.boxes[0]
+            self.assertLessEqual(h, res.content_height + 1, ang)
+            self.assertGreater(h, res.content_height * 0.9, ang)
+
+    def test_qr_at_45_degrees_fits(self):
+        lab = R.Label(tape_width=24, elements=[R.QRElement(data="hello", rotation=45)])
+        res = R.render(lab)
+        self.assertLessEqual(res.boxes[0][3], res.content_height + 1)
+
+    def test_calibration_ruler(self):
+        r = R.ruler_label(12, 100)
+        self.assertEqual(r.length_dots, round(R.mm(100)) + 1)
+        lines = R.to_raster_lines(r, 12)
+        self.assertTrue(any(lines[0]) and any(lines[-1]))     # full-height end lines
+
+
 class JobTest(unittest.TestCase):
     def test_structure(self):
         lines = [b"\x00" * 16, b"\xff" * 16]
