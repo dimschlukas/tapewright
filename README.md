@@ -19,7 +19,14 @@ Supported tapes are TZe tapes 3.5, 6, 9, 12, 18 and 24 mm wide.
 
 ## Features
 
-- **Elements.** Text, images, QR codes, Code 128 barcodes and spacers are placed left to right along the tape.
+- **Elements:** text, images, QR codes, Code 128 barcodes and spacers.
+- **Two layouts:**
+  - *Automatic* places elements left to right along the tape.
+  - *Free* lets you drag elements anywhere in the preview and resize them with the corner handle.
+    Elements snap to the tape centre and edges and to other elements; hold Shift to turn snapping off.
+    Arrow keys nudge (Shift = 1 mm), Delete removes, and the right-click menu has front/back and centring.
+  - The first drag switches a label to free layout without moving anything.
+- **Undo/redo** with Ctrl+Z and Ctrl+Shift+Z.
 - **Text:**
   - any installed font and face;
   - auto-size to the tape height, or a fixed point size;

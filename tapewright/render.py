@@ -31,9 +31,18 @@ def mm(v):
 
 
 # ---------------------------------------------------------------- elements
+# Every element also carries x_mm / y_mm / h_mm. They are only used when the
+# label's layout is "free": position of the element box's top-left corner
+# (x from the label's left end, y from the top of the printable area) and the
+# box height. h_mm == 0 means "not placed yet".
+
+PLACEMENT_FIELDS = ("x_mm", "y_mm", "h_mm")
 
 @dataclass
 class TextElement:
+    x_mm: float = 0.0
+    y_mm: float = 0.0
+    h_mm: float = 0.0
     kind: str = "text"
     text: str = "Label"
     font: str = "Sans Bold"          # Pango description without size
@@ -54,6 +63,9 @@ class TextElement:
 
 @dataclass
 class ImageElement:
+    x_mm: float = 0.0
+    y_mm: float = 0.0
+    h_mm: float = 0.0
     kind: str = "image"
     path: str = ""
     height_pct: float = 100.0
@@ -67,6 +79,9 @@ class ImageElement:
 
 @dataclass
 class QRElement:
+    x_mm: float = 0.0
+    y_mm: float = 0.0
+    h_mm: float = 0.0
     kind: str = "qr"
     data: str = "https://example.com"
     height_pct: float = 100.0
@@ -78,6 +93,9 @@ class QRElement:
 
 @dataclass
 class BarcodeElement:
+    x_mm: float = 0.0
+    y_mm: float = 0.0
+    h_mm: float = 0.0
     kind: str = "barcode"
     data: str = "123456"
     module: int = 2                  # dots per narrow bar
@@ -91,6 +109,9 @@ class BarcodeElement:
 
 @dataclass
 class SpacerElement:
+    x_mm: float = 0.0
+    y_mm: float = 0.0
+    h_mm: float = 0.0
     kind: str = "spacer"
     width_mm: float = 3.0
     line: bool = False               # draw a vertical separator line
@@ -119,7 +140,8 @@ class Label:
     pad_mm: float = 2.0              # horizontal padding at label ends
     v_pad_mm: float = 0.0            # vertical padding inside border
     gap_mm: float = 2.0              # gap between elements
-    content_align: str = "center"    # for fixed-length labels
+    content_align: str = "center"    # for fixed-length labels (flow layout)
+    layout: str = "flow"             # flow = automatic left->right, free = drag & drop
     invert: bool = False
     border: str = "none"             # none/rect/rounded/double
     border_width: int = 3            # dots
@@ -179,7 +201,13 @@ class RenderError(Exception):
 class _Ctx:
     def __init__(self, label, n):
         self.label, self.n = label, n
+        self.free = label.layout == "free"
         self.warnings = []
+
+
+def _pct(el, ctx):
+    """In the free layout the element height is set directly by h_mm."""
+    return 100.0 if ctx.free else getattr(el, "height_pct", 100.0)
 
 
 def _make_layout(cr, el: TextElement, size_pt: float, text: str):
@@ -218,13 +246,13 @@ def _rect(r):
 def _measure_text(cr, el: TextElement, avail_h, ctx):
     text = expand(el.text, ctx.n)
     if not text.strip():
-        return 0, None
+        return 0, 0, None
     if el.auto_size:
         probe = _make_layout(cr, el, 100.0, text)
         ink, logical = probe.get_pixel_extents()
         ref_h = ink.height if el.fit_glyphs else logical.height
         if ref_h <= 0:
-            return 0, None
+            return 0, 0, None
         size = 100.0 * avail_h / ref_h
         layout = _make_layout(cr, el, size, text)
         # correct for non-linear hinting
@@ -238,7 +266,7 @@ def _measure_text(cr, el: TextElement, avail_h, ctx):
     ink, logical = layout.get_extents()
     ix, iy, iw, ih = _rect(ink)
     lx, ly, lw, lh = _rect(logical)
-    if not el.auto_size and lh > avail_h + 0.5:
+    if not el.auto_size and not ctx.free and lh > avail_h + 0.5:
         ctx.warnings.append(f"Text “{text[:20]}” is taller than the tape")
     x0 = min(ix, lx)
     width = max(ix + iw, lx + lw) - x0
@@ -252,7 +280,7 @@ def _measure_text(cr, el: TextElement, avail_h, ctx):
         cr.move_to(x - x0, y)
         PangoCairo.show_layout(cr, layout)
 
-    return math.ceil(width), draw
+    return math.ceil(width), (ih if el.fit_glyphs else lh), draw
 
 
 _img_cache = {}
@@ -312,12 +340,12 @@ def _mask_from_bitmap(bits: Image.Image):
 
 
 def _measure_image(cr, el: ImageElement, avail_h, ctx):
-    th = max(1, round(avail_h * el.height_pct / 100))
+    th = max(1, round(avail_h * _pct(el, ctx) / 100))
     try:
         img = _load_image(el.path, th)
     except Exception as e:  # noqa: BLE001
         ctx.warnings.append(str(e))
-        return 0, None
+        return 0, 0, None
     if el.invert:
         img = ImageOps.invert(img)
     if el.dither:
@@ -330,19 +358,19 @@ def _measure_image(cr, el: ImageElement, avail_h, ctx):
         _ = keep
         cr.mask_surface(surf, round(x), round(top + (h - th) / 2))
 
-    return bits.width, draw
+    return bits.width, th, draw
 
 
 def _measure_qr(cr, el: QRElement, avail_h, ctx):
     data = expand(el.data, ctx.n)
     if not data:
-        return 0, None
+        return 0, 0, None
     try:
         import qrcode
         from qrcode.constants import ERROR_CORRECT_H, ERROR_CORRECT_L, ERROR_CORRECT_M, ERROR_CORRECT_Q
     except ImportError:
         ctx.warnings.append("QR codes need the python 'qrcode' package")
-        return 0, None
+        return 0, 0, None
     ec = {"L": ERROR_CORRECT_L, "M": ERROR_CORRECT_M, "Q": ERROR_CORRECT_Q,
           "H": ERROR_CORRECT_H}.get(el.error_correction, ERROR_CORRECT_M)
     qr = qrcode.QRCode(error_correction=ec, border=0)
@@ -350,7 +378,7 @@ def _measure_qr(cr, el: QRElement, avail_h, ctx):
     qr.make(fit=True)
     matrix = qr.get_matrix()
     n = len(matrix)
-    target = avail_h * el.height_pct / 100
+    target = avail_h * _pct(el, ctx) / 100
     module = int(target // n)
     if module < 1:
         ctx.warnings.append("QR code has too much data for this tape width")
@@ -368,22 +396,22 @@ def _measure_qr(cr, el: QRElement, avail_h, ctx):
                     cr.rectangle(x0 + c * module, y0 + r * module, module, module)
         cr.fill()
 
-    return size, draw
+    return size, size, draw
 
 
 def _measure_barcode(cr, el: BarcodeElement, avail_h, ctx):
     data = expand(el.data, ctx.n)
     if not data:
-        return 0, None
+        return 0, 0, None
     try:
         modules = code128_modules(data)
     except ValueError as e:
         ctx.warnings.append(str(e))
-        return 0, None
+        return 0, 0, None
     m = max(1, int(el.module))
     quiet = 10 * m
     width = sum(modules) * m + 2 * quiet
-    total_h = avail_h * el.height_pct / 100
+    total_h = avail_h * _pct(el, ctx) / 100
     tlayout = None
     text_h = 0
     if el.show_text:
@@ -406,7 +434,7 @@ def _measure_barcode(cr, el: BarcodeElement, avail_h, ctx):
             cr.move_to(x + (width - tw) / 2, y0 + bar_h)
             PangoCairo.show_layout(cr, tlayout)
 
-    return width, draw
+    return width, total_h, draw
 
 
 def _measure_spacer(cr, el: SpacerElement, avail_h, ctx):
@@ -418,7 +446,7 @@ def _measure_spacer(cr, el: SpacerElement, avail_h, ctx):
             cr.rectangle(round(x + (w - lw) / 2), top, lw, h)
             cr.fill()
 
-    return w, draw
+    return w, avail_h, draw
 
 
 _MEASURE = {"text": _measure_text, "image": _measure_image, "qr": _measure_qr,
@@ -431,6 +459,13 @@ class RenderResult:
     length_dots: int
     print_height: int
     warnings: list
+    # per element (same order as label.elements): (x, y, w, h) in dots, label
+    # coordinates with y relative to the top of the printable area; None if
+    # the element produced nothing
+    boxes: list = field(default_factory=list)
+    content_top: int = 0      # top of the content area inside border/padding
+    content_height: int = 0
+    frame: int = 0            # border thickness incl. inset
 
     @property
     def length_mm(self):
@@ -455,25 +490,56 @@ def render(label: Label, n: int = 1) -> RenderResult:
     # measuring pass on a scratch surface
     scratch = cairo.ImageSurface(cairo.FORMAT_RGB24, 8, 8)
     scr = cairo.Context(scratch)
-    items = []
-    for el in label.elements:
-        w, draw = _MEASURE[el.kind](scr, el, avail, ctx)
-        if draw is not None and w > 0:
-            items.append((w, draw))
     gap = mm(label.gap_mm)
-    content_w = sum(w for w, _ in items) + gap * max(0, len(items) - 1)
     side = frame + mm(label.pad_mm)
+    fixed = bool(label.length_mm and label.length_mm > 0)
+    boxes = [None] * len(label.elements)
+    items = []    # (index, w, h, draw)
+    for i, el in enumerate(label.elements):
+        el_avail = avail
+        if ctx.free and el.h_mm > 0:
+            el_avail = max(2, round(mm(el.h_mm)))
+        w, h, draw = _MEASURE[el.kind](scr, el, el_avail, ctx)
+        if draw is not None and w > 0:
+            items.append((i, w, h, draw))
 
-    if label.length_mm and label.length_mm > 0:
-        L = round(mm(label.length_mm))
-        free = L - 2 * side - content_w
-        if free < 0:
-            ctx.warnings.append(f"Content needs {(content_w + 2 * side) / DOTS_PER_MM:.1f} mm "
-                                f"but label is {label.length_mm:g} mm")
-        start = side + {"left": 0, "right": free}.get(label.content_align, free / 2)
+    if ctx.free:
+        # placed elements keep their position; unplaced ones go to the right end
+        right = side
+        for i, w, h, draw in items:
+            el = label.elements[i]
+            if el.h_mm > 0:
+                boxes[i] = (round(mm(el.x_mm)), round(mm(el.y_mm)), w, h)
+                right = max(right, boxes[i][0] + w + gap)
+        for i, w, h, draw in items:
+            if boxes[i] is None:
+                boxes[i] = (round(right), round(top + (avail - h) / 2), w, h)
+                right += w + gap
+        content_right = max((b[0] + b[2] for b in boxes if b), default=side)
+        if fixed:
+            L = round(mm(label.length_mm))
+            if content_right > L - frame + 0.5:
+                ctx.warnings.append("Some content lies beyond the end of the label")
+        else:
+            L = max(1, math.ceil(content_right + side))
+        if any(b and (b[0] < frame - 0.5 or b[1] < frame - 0.5 or b[1] + b[3] > H - frame + 0.5)
+               for b in boxes):
+            ctx.warnings.append("Some content lies outside the printable area and is cut off")
     else:
-        L = max(1, math.ceil(content_w + 2 * side))
-        start = side
+        content_w = sum(w for _, w, _, _ in items) + gap * max(0, len(items) - 1)
+        if fixed:
+            L = round(mm(label.length_mm))
+            spare = L - 2 * side - content_w
+            if spare < 0:
+                ctx.warnings.append(f"Content needs {(content_w + 2 * side) / DOTS_PER_MM:.1f} mm "
+                                    f"but label is {label.length_mm:g} mm")
+            x = side + {"left": 0, "right": spare}.get(label.content_align, spare / 2)
+        else:
+            L = max(1, math.ceil(content_w + 2 * side))
+            x = side
+        for i, w, h, draw in items:
+            boxes[i] = (round(x), round(top + (avail - h) / 2), w, h)
+            x += w + gap
 
     surf = cairo.ImageSurface(cairo.FORMAT_RGB24, L, H)
     cr = cairo.Context(surf)
@@ -512,12 +578,11 @@ def render(label: Label, n: int = 1) -> RenderResult:
     cr.save()
     cr.rectangle(frame, frame, max(0, L - 2 * frame), max(0, H - 2 * frame))
     cr.clip()
-    x = start
-    for w, draw in items:
+    for i, w, h, draw in items:
+        bx, by, _, _ = boxes[i]
         cr.save()
-        draw(cr, x, top, avail)
+        draw(cr, bx, by, h)
         cr.restore()
-        x += w + gap
     cr.restore()
     surf.flush()
 
@@ -527,7 +592,20 @@ def render(label: Label, n: int = 1) -> RenderResult:
     img = img.point(lambda v: 255 if v >= thr else 0)
     if label.invert:
         img = ImageOps.invert(img)
-    return RenderResult(img, L, H, ctx.warnings)
+    return RenderResult(img, L, H, ctx.warnings, boxes, top, avail, frame)
+
+
+def freeze_layout(label: Label, result: RenderResult):
+    """Switch a label to the free layout, keeping every element where the
+    current (flow) layout put it."""
+    for el, box in zip(label.elements, result.boxes):
+        if box is None:
+            continue
+        x, y, w, h = box
+        el.x_mm = round(x / DOTS_PER_MM, 4)
+        el.y_mm = round(y / DOTS_PER_MM, 4)
+        el.h_mm = round(max(h, 2) / DOTS_PER_MM, 4)
+    label.layout = "free"
 
 
 def to_raster_lines(result: RenderResult, tape_width: int) -> list[bytes]:

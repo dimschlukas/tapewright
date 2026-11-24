@@ -111,6 +111,48 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(again, lab)
 
 
+class FreeLayoutTest(unittest.TestCase):
+    def _label(self):
+        return R.Label(tape_width=12, border="rounded",
+                       elements=[R.QRElement(data="https://example.com"),
+                                 R.TextElement(text="Two\nlines", align="left"),
+                                 R.SpacerElement(line=True),
+                                 R.BarcodeElement(data="12345678")])
+
+    def test_freeze_is_lossless(self):
+        for tw in (6, 12, 18, 24):
+            lab = self._label()
+            lab.tape_width = tw
+            before = R.render(lab)
+            R.freeze_layout(lab, before)
+            self.assertEqual(lab.layout, "free")
+            after = R.render(lab)
+            self.assertEqual(before.length_dots, after.length_dots)
+            self.assertEqual(list(before.bitmap.getdata()), list(after.bitmap.getdata()), tw)
+            self.assertEqual(before.boxes, after.boxes)
+
+    def test_move_and_auto_length(self):
+        lab = self._label()
+        R.freeze_layout(lab, R.render(lab))
+        lab.elements[0].x_mm += 10
+        res = R.render(lab)
+        self.assertEqual(res.boxes[0][0], round(R.mm(lab.elements[0].x_mm)))
+        # moving the last element further right makes an automatic label longer
+        before = res.length_dots
+        lab.elements[-1].x_mm += 20
+        self.assertGreater(R.render(lab).length_dots, before)
+
+    def test_resize_changes_height(self):
+        lab = R.Label(layout="free", elements=[R.QRElement(data="x", h_mm=4.0)])
+        res = R.render(lab)
+        self.assertLessEqual(res.boxes[0][3], round(R.mm(4.0)))
+
+    def test_unplaced_elements_get_a_position(self):
+        lab = R.Label(layout="free", elements=[R.TextElement(text="a"), R.TextElement(text="b")])
+        b = R.render(lab).boxes
+        self.assertLess(b[0][0] + b[0][2], b[1][0])
+
+
 class JobTest(unittest.TestCase):
     def test_structure(self):
         lines = [b"\x00" * 16, b"\xff" * 16]
