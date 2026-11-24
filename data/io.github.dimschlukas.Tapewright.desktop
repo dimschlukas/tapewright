@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Tapewright
+GenericName=Label Designer
+Comment=Design and print labels on Brother P-touch label printers
+Exec=tapewright-gui %f
+Icon=io.github.dimschlukas.Tapewright
+Terminal=false
+Categories=Office;
+Keywords=label;tape;printer;P-touch;PT-P700;barcode;QR;
+MimeType=application/x-tapewright-label;
+StartupNotify=true

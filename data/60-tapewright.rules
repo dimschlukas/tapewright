@@ -1,0 +1,7 @@
+# Tapewright: give the logged-in desktop user access to Brother P-touch
+# label printers over USB (no root or group membership needed).
+SUBSYSTEM!="usb", GOTO="tapewright_end"
+ATTRS{idVendor}!="04f9", GOTO="tapewright_end"
+# PT-P700, PT-P750W, PT-E550W, PT-P710BT, PT-D450, PT-D600
+ATTRS{idProduct}=="2061|2062|2060|20af|2073|2074", MODE="0660", TAG+="uaccess"
+LABEL="tapewright_end"

@@ -1,0 +1,31 @@
+# Maintainer: dimschlukas
+pkgname=tapewright
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Label designer and driver for Brother P-touch label printers (PT-P700 and compatible)"
+arch=('any')
+url="https://github.com/dimschlukas/tapewright"
+license=('GPL-3.0-or-later')
+depends=('python' 'python-gobject' 'python-cairo' 'python-pillow' 'gtk4' 'libadwaita'
+         'pango' 'libusb')
+optdepends=('python-qrcode: QR code elements'
+            'librsvg: SVG images')
+makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$pkgname-$pkgver"
+  python -m build --wheel --no-isolation
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  python -m unittest discover -s tests
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+  make install-data DESTDIR="$pkgdir" PREFIX=/usr UDEVDIR=/usr/lib/udev/rules.d
+}

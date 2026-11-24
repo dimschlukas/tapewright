@@ -1,0 +1,57 @@
+{
+  "tape_width": 12,
+  "length_mm": 0.0,
+  "pad_mm": 2.0,
+  "v_pad_mm": 0.0,
+  "gap_mm": 2.0,
+  "content_align": "center",
+  "invert": false,
+  "border": "rounded",
+  "border_width": 3,
+  "border_inset": 0,
+  "border_radius_mm": 1.5,
+  "threshold": 128,
+  "elements": [
+    {
+      "kind": "qr",
+      "data": "https://github.com/dimschlukas/tapewright",
+      "height_pct": 100.0,
+      "error_correction": "M"
+    },
+    {
+      "kind": "text",
+      "text": "Tapewright\nlabels for Linux",
+      "font": "Sans Bold",
+      "auto_size": true,
+      "size": 16.0,
+      "fit_glyphs": false,
+      "align": "left",
+      "line_spacing": 1.0,
+      "letter_spacing": 0.0,
+      "underline": false,
+      "strike": false,
+      "v_offset": 0.0
+    },
+    {
+      "kind": "spacer",
+      "width_mm": 4,
+      "line": true,
+      "line_width": 2
+    },
+    {
+      "kind": "text",
+      "text": "No {n:03d}",
+      "font": "Sans",
+      "auto_size": true,
+      "size": 16.0,
+      "fit_glyphs": false,
+      "align": "center",
+      "line_spacing": 1.0,
+      "letter_spacing": 0.0,
+      "underline": false,
+      "strike": false,
+      "v_offset": 0.0
+    }
+  ],
+  "format": "tapewright/1"
+}

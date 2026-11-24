@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.dimschlukas.Tapewright</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Tapewright</name>
+  <summary>Design and print labels on Brother P-touch printers</summary>
+  <developer id="io.github.dimschlukas">
+    <name>dimschlukas</name>
+  </developer>
+  <description>
+    <p>
+      Tapewright is a label designer for Brother P-touch USB label printers such as
+      the PT-P700. It talks to the printer directly over USB, so no printer driver is needed.
+    </p>
+    <ul>
+      <li>Text in any installed font, auto-sized to the tape</li>
+      <li>Images, QR codes and Code 128 barcodes</li>
+      <li>Borders, inverted printing, fixed or automatic length</li>
+      <li>Serial numbers and date/time variables</li>
+      <li>Live printer status and a dot-accurate preview in the real tape colours</li>
+    </ul>
+    <p>
+      Brother and P-touch are trademarks of Brother Industries, Ltd. This project is not
+      affiliated with or endorsed by Brother.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.dimschlukas.Tapewright.desktop</launchable>
+  <url type="homepage">https://github.com/dimschlukas/tapewright</url>
+  <url type="bugtracker">https://github.com/dimschlukas/tapewright/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/dimschlukas/tapewright/main/docs/screenshot.png</image>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-11-24"/>
+  </releases>
+  <provides>
+    <binary>tapewright</binary>
+    <modalias>usb:v04F9p2061*</modalias>
+  </provides>
+</component>
