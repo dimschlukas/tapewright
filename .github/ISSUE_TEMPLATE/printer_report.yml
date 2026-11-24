@@ -1,0 +1,38 @@
+name: Printer compatibility report
+description: Tell us whether Tapewright works with your P-touch model
+labels: [printer-support]
+body:
+  - type: input
+    id: model
+    attributes:
+      label: Printer model
+      placeholder: e.g. PT-P750W
+    validations:
+      required: true
+  - type: input
+    id: usb
+    attributes:
+      label: USB ID
+      description: The `04f9:xxxx` ID shown by `lsusb`
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Does printing work?
+      options:
+        - "Yes, everything works"
+        - "Partly (see notes)"
+        - "No"
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: Output of `tapewright status`
+      render: text
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Tape widths tested, calibration ruler result, anything odd.

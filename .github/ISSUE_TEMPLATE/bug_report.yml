@@ -1,0 +1,40 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Tapewright version
+      description: Output of `tapewright --version`
+    validations:
+      required: true
+  - type: input
+    id: printer
+    attributes:
+      label: Printer model and tape
+      placeholder: e.g. PT-P700, 12 mm laminated black on white
+  - type: textarea
+    id: status
+    attributes:
+      label: Printer status
+      description: Output of `tapewright status`
+      render: text
+  - type: input
+    id: distro
+    attributes:
+      label: Linux distribution and desktop
+      placeholder: e.g. Arch Linux, GNOME 49 (Wayland)
+  - type: textarea
+    id: logs
+    attributes:
+      label: Terminal output
+      description: Start Tapewright from a terminal and paste any errors.
+      render: text

@@ -6,6 +6,7 @@ Uses libusb-1.0 through ctypes (no third-party Python packages needed).
 Falls back to the kernel usblp character device (/dev/usb/lp*) if libusb
 cannot open the device.
 """
+
 from __future__ import annotations
 
 import ctypes
@@ -86,11 +87,19 @@ def _libusb():
     lib.libusb_claim_interface.argtypes = [vp, ctypes.c_int]
     lib.libusb_release_interface.argtypes = [vp, ctypes.c_int]
     lib.libusb_bulk_transfer.argtypes = [
-        vp, ctypes.c_ubyte, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int,
-        ctypes.POINTER(ctypes.c_int), ctypes.c_uint,
+        vp,
+        ctypes.c_ubyte,
+        ctypes.POINTER(ctypes.c_ubyte),
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.c_uint,
     ]
     lib.libusb_get_string_descriptor_ascii.argtypes = [
-        vp, ctypes.c_uint8, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int]
+        vp,
+        ctypes.c_uint8,
+        ctypes.POINTER(ctypes.c_ubyte),
+        ctypes.c_int,
+    ]
     lib.libusb_strerror.argtypes = [ctypes.c_int]
     lib.libusb_strerror.restype = ctypes.c_char_p
     _lib = lib
@@ -156,9 +165,17 @@ class LibUSBTransport:
                     if k > 0:
                         serial = bytes(buf[:k]).decode(errors="replace")
                     lib.libusb_close(h)
-                out.append(DeviceInfo(lib.libusb_get_bus_number(dev),
-                                      lib.libusb_get_device_address(dev),
-                                      d.idProduct, name, pins, dpi, serial))
+                out.append(
+                    DeviceInfo(
+                        lib.libusb_get_bus_number(dev),
+                        lib.libusb_get_device_address(dev),
+                        d.idProduct,
+                        name,
+                        pins,
+                        dpi,
+                        serial,
+                    )
+                )
         finally:
             if n >= 0:
                 lib.libusb_free_device_list(lst, 1)
@@ -177,8 +194,10 @@ class LibUSBTransport:
                 lib.libusb_get_device_descriptor(dev, ctypes.byref(d))
                 if d.idVendor != BROTHER_VID or d.idProduct not in KNOWN_PRINTERS:
                     continue
-                if info and (lib.libusb_get_bus_number(dev) != info.bus or
-                             lib.libusb_get_device_address(dev) != info.address):
+                if info and (
+                    lib.libusb_get_bus_number(dev) != info.bus
+                    or lib.libusb_get_device_address(dev) != info.address
+                ):
                     continue
                 h = ctypes.c_void_p()
                 r = lib.libusb_open(dev, ctypes.byref(h))
@@ -186,9 +205,14 @@ class LibUSBTransport:
                     raise _err(lib, r, "Cannot open printer (permissions?)")
                 found = h
                 name, pins, dpi = KNOWN_PRINTERS[d.idProduct]
-                self.info = info or DeviceInfo(lib.libusb_get_bus_number(dev),
-                                               lib.libusb_get_device_address(dev),
-                                               d.idProduct, name, pins, dpi)
+                self.info = info or DeviceInfo(
+                    lib.libusb_get_bus_number(dev),
+                    lib.libusb_get_device_address(dev),
+                    d.idProduct,
+                    name,
+                    pins,
+                    dpi,
+                )
                 break
         finally:
             if n >= 0:
@@ -197,8 +221,10 @@ class LibUSBTransport:
             raise USBError("No supported Brother P-touch printer found")
         self.handle = found
         if self.info.pid in (0x2064, 0x2065):
-            raise USBError("Printer is in 'Editor Lite' mode. Press and hold the "
-                           "Editor Lite button until the green LED turns off.")
+            raise USBError(
+                "Printer is in 'Editor Lite' mode. Press and hold the "
+                "Editor Lite button until the green LED turns off."
+            )
         if lib.libusb_kernel_driver_active(self.handle, 0) == 1:
             r = lib.libusb_detach_kernel_driver(self.handle, 0)
             if r != 0:
@@ -212,11 +238,12 @@ class LibUSBTransport:
         lib = self.lib
         pos = 0
         while pos < len(data):
-            chunk = data[pos:pos + 4096]
+            chunk = data[pos : pos + 4096]
             buf = (ctypes.c_ubyte * len(chunk)).from_buffer_copy(chunk)
             done = ctypes.c_int()
-            r = lib.libusb_bulk_transfer(self.handle, self.EP_OUT, buf, len(chunk),
-                                         ctypes.byref(done), timeout_ms)
+            r = lib.libusb_bulk_transfer(
+                self.handle, self.EP_OUT, buf, len(chunk), ctypes.byref(done), timeout_ms
+            )
             if r != 0:
                 raise _err(lib, r, "USB write failed")
             pos += done.value
@@ -224,13 +251,14 @@ class LibUSBTransport:
     def read(self, size=32, timeout_ms=1000) -> bytes:
         buf = (ctypes.c_ubyte * 64)()
         done = ctypes.c_int()
-        r = self.lib.libusb_bulk_transfer(self.handle, self.EP_IN, buf, 64,
-                                          ctypes.byref(done), timeout_ms)
+        r = self.lib.libusb_bulk_transfer(
+            self.handle, self.EP_IN, buf, 64, ctypes.byref(done), timeout_ms
+        )
         if r == LIBUSB_ERROR_TIMEOUT:
-            return bytes(buf[:done.value])
+            return bytes(buf[: done.value])
         if r != 0:
             raise _err(self.lib, r, "USB read failed")
-        return bytes(buf[:done.value])
+        return bytes(buf[: done.value])
 
     def close(self):
         if self.handle:

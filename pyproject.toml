@@ -43,3 +43,10 @@ tapewright = ["icons/hicolor/scalable/actions/*.svg"]
 
 [tool.setuptools.dynamic]
 version = { attr = "tapewright.__version__" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "I"]

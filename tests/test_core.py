@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 dimschlukas
 """Hardware-free tests for the protocol, barcode and renderer."""
+
 import os
 import sys
 import unittest
@@ -9,8 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from tapewright import render as R  # noqa: E402
 from tapewright.barcode import code128_codes, code128_modules  # noqa: E402
-from tapewright.protocol import (TAPE_GEOMETRY, JobOptions, Status,  # noqa: E402
-                                 build_job, packbits)
+from tapewright.protocol import TAPE_GEOMETRY, JobOptions, Status, build_job, packbits  # noqa: E402
 
 
 def unpackbits(data: bytes) -> bytes:
@@ -19,7 +19,7 @@ def unpackbits(data: bytes) -> bytes:
         n = data[i]
         i += 1
         if n < 128:
-            out += data[i:i + n + 1]
+            out += data[i : i + n + 1]
             i += n + 1
         elif n > 128:
             out += bytes([data[i]]) * (257 - n)
@@ -29,8 +29,15 @@ def unpackbits(data: bytes) -> bytes:
 
 class PackBitsTest(unittest.TestCase):
     def test_roundtrip(self):
-        cases = [b"", b"\x00", b"\x00" * 16, b"\xff" * 300, bytes(range(16)),
-                 b"\x01\x01\x02\x03\x03\x03\x04" * 5, bytes([0, 255] * 70)]
+        cases = [
+            b"",
+            b"\x00",
+            b"\x00" * 16,
+            b"\xff" * 300,
+            bytes(range(16)),
+            b"\x01\x01\x02\x03\x03\x03\x04" * 5,
+            bytes([0, 255] * 70),
+        ]
         for c in cases:
             self.assertEqual(unpackbits(packbits(c)), c, c)
 
@@ -41,9 +48,9 @@ class PackBitsTest(unittest.TestCase):
 class Code128Test(unittest.TestCase):
     def test_uses_subset_c_for_digits(self):
         codes = code128_codes("123456")
-        self.assertEqual(codes[0], 105)               # Start C
+        self.assertEqual(codes[0], 105)  # Start C
         self.assertEqual(codes[1:4], [12, 34, 56])
-        self.assertEqual(codes[-1], 106)              # Stop
+        self.assertEqual(codes[-1], 106)  # Stop
 
     def test_checksum(self):
         # Start B (104) + 'A'(33)*1 + 'B'(34)*2 = 205 -> 205 % 103 = 102
@@ -79,8 +86,7 @@ class StatusTest(unittest.TestCase):
 class RenderTest(unittest.TestCase):
     def test_every_tape_width(self):
         for tw, (pins, margin) in TAPE_GEOMETRY.items():
-            lab = R.Label(tape_width=tw, border="rect",
-                          elements=[R.TextElement(text="Hi")])
+            lab = R.Label(tape_width=tw, border="rect", elements=[R.TextElement(text="Hi")])
             res = R.render(lab)
             self.assertEqual(res.bitmap.size[1], pins)
             lines = R.to_raster_lines(res, tw)
@@ -104,20 +110,30 @@ class RenderTest(unittest.TestCase):
         self.assertFalse(R.Label(elements=[R.TextElement(text="{date}")]).uses_counter())
 
     def test_json_roundtrip(self):
-        lab = R.Label(border="double", elements=[R.TextElement(text="a\nb"),
-                                                 R.QRElement(data="x"),
-                                                 R.SpacerElement(line=True)])
+        lab = R.Label(
+            border="double",
+            elements=[
+                R.TextElement(text="a\nb"),
+                R.QRElement(data="x"),
+                R.SpacerElement(line=True),
+            ],
+        )
         again = R.Label.from_json(lab.to_json())
         self.assertEqual(again, lab)
 
 
 class FreeLayoutTest(unittest.TestCase):
     def _label(self):
-        return R.Label(tape_width=12, border="rounded",
-                       elements=[R.QRElement(data="https://example.com"),
-                                 R.TextElement(text="Two\nlines", align="left"),
-                                 R.SpacerElement(line=True),
-                                 R.BarcodeElement(data="12345678")])
+        return R.Label(
+            tape_width=12,
+            border="rounded",
+            elements=[
+                R.QRElement(data="https://example.com"),
+                R.TextElement(text="Two\nlines", align="left"),
+                R.SpacerElement(line=True),
+                R.BarcodeElement(data="12345678"),
+            ],
+        )
 
     def test_freeze_is_lossless(self):
         for tw in (6, 12, 18, 24):
@@ -146,7 +162,7 @@ class FreeLayoutTest(unittest.TestCase):
         lab = self._label()
         lab.pad_start_mm, lab.pad_end_mm = 1.0, 5.0
         R.freeze_layout(lab, R.render(lab))
-        for el in lab.elements:          # move everything 15 mm to the right
+        for el in lab.elements:  # move everything 15 mm to the right
             el.x_mm += 15
         res = R.render(lab)
         start = res.frame + R.mm(1.0)
@@ -169,7 +185,7 @@ class FreeLayoutTest(unittest.TestCase):
         lab = R.Label(tape_width=24, elements=[R.TextElement(text="Vertical", rotation=90)])
         res = R.render(lab)
         x, y, w, h = res.boxes[0]
-        self.assertGreater(h, w)                     # tall box
+        self.assertGreater(h, w)  # tall box
         self.assertLessEqual(h, res.content_height)  # auto-size fits the length to the tape
         for rot in (90, 180, 270):
             lab = self._label()
@@ -203,8 +219,13 @@ class AnyAngleTest(unittest.TestCase):
 
     def test_auto_size_fits_rotated_box(self):
         for ang in (15, 30, 45, 60, 330):
-            lab = R.Label(tape_width=24, elements=[R.TextElement(text="Angle", rotation=ang),
-                                                   R.ImageElement(path="", rotation=ang)])
+            lab = R.Label(
+                tape_width=24,
+                elements=[
+                    R.TextElement(text="Angle", rotation=ang),
+                    R.ImageElement(path="", rotation=ang),
+                ],
+            )
             res = R.render(lab)
             x, y, w, h = res.boxes[0]
             self.assertLessEqual(h, res.content_height + 1, ang)
@@ -219,7 +240,7 @@ class AnyAngleTest(unittest.TestCase):
         r = R.ruler_label(12, 100)
         self.assertEqual(r.length_dots, round(R.mm(100)) + 1)
         lines = R.to_raster_lines(r, 12)
-        self.assertTrue(any(lines[0]) and any(lines[-1]))     # full-height end lines
+        self.assertTrue(any(lines[0]) and any(lines[-1]))  # full-height end lines
 
 
 class JobTest(unittest.TestCase):

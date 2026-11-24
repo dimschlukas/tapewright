@@ -1,5 +1,8 @@
 # Tapewright
 
+[![CI](https://github.com/dimschlukas/tapewright/actions/workflows/ci.yml/badge.svg)](https://github.com/dimschlukas/tapewright/actions/workflows/ci.yml)
+[![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
+
 Tapewright is a label designer for Brother P-touch USB label printers on Linux.
 It talks to the printer directly over USB, so it needs no CUPS driver and no Brother software.
 
@@ -13,58 +16,55 @@ It talks to the printer directly over USB, so it needs no CUPS driver and no Bro
 | Model | Status |
 |---|---|
 | PT-P700 | tested |
-| PT-P750W, PT-E550W, PT-P710BT (USB), PT-D450, PT-D600 | same raster protocol family; untested, reports welcome |
+| PT-P750W, PT-E550W, PT-P710BT (USB), PT-D450, PT-D600 | same raster protocol family; untested, [reports welcome](../../issues/new?template=printer_report.yml) |
 
 Supported tapes are TZe tapes 3.5, 6, 9, 12, 18 and 24 mm wide.
 
 ## Features
 
 - **Elements:** text, images, QR codes, Code 128 barcodes and spacers.
-- **Two layouts:**
-  - *Automatic* places elements left to right along the tape.
-  - *Free* lets you drag elements anywhere in the preview and resize them with the corner handle.
-    Elements snap to the tape centre and edges and to other elements; hold Shift to turn snapping off.
-    Arrow keys nudge (Shift = 1 mm), Delete removes, and the right-click menu has front/back and centring.
-  - The first drag switches a label to free layout without moving anything.
-- **Rotation** to any angle, in either layout:
-  - drag the round handle above a selected element (snaps to 15°; Shift for free rotation);
-  - type an exact angle;
-  - or rotate by 90° with Ctrl+R / Ctrl+Shift+R.
-  In free layout an element keeps its size and centre while rotating.
-- **Rulers** in real millimetres:
-  - horizontal from the cut edge of the printed piece, including the printer's feed margin at each end;
-  - vertical from the top edge of the tape, with the printable band marked.
-  The X/Y position fields use the same reference.
-  *Print → Print calibration ruler* (or `tapewright calibrate`) checks your printer.
-- **Multi-select:** Ctrl/Shift+click, drag a box, or Ctrl+A.
-  - Move several elements together.
-  - Align left, centre, right, top, middle or bottom; distribute three or more evenly.
-  - A single element is aligned to the label.
-- **Undo/redo** with Ctrl+Z and Ctrl+Shift+Z.
 - **Text:**
   - any installed font and face;
   - auto-size to the tape height, or a fixed point size;
   - multi-line, with line alignment, line and letter spacing, underline and strikethrough.
 - **Images:** PNG, JPEG, SVG and more, with dithering or a threshold.
+- **Two layouts:**
+  - *Automatic* places elements left to right along the tape.
+  - *Free* lets you drag elements anywhere in the preview and resize them with the corner handle.
+    Elements snap to the tape centre and edges and to other elements.
+  - The first drag switches a label to free layout without moving anything.
+- **Rotation** to any angle: drag the round handle, type an exact angle, or rotate in 90° steps.
+- **Multi-select:** move a group together, align it (left, centre, right, top, middle, bottom), or distribute three or more elements evenly.
+- **Undo/redo.**
+- **Rulers** in real millimetres:
+  - horizontal from the cut edge of the printed piece, including the printer's feed margin at each end;
+  - vertical from the top edge of the tape, with the printable band marked.
 - **Label options:**
   - borders: rectangle, rounded or double;
   - inverted (white-on-black) printing;
   - fixed or automatic length;
-  - separate start and end padding, and the gap between elements.
+  - separate start and end padding.
 - **Variables:** `{date}`, `{time}`, `{datetime}`, `{date:%d.%m.%Y}`, and the serial number `{n}` / `{n:03d}`, which increases with each copy.
 - **Printer integration:**
-  - live printer status: tape width, type, colours and errors;
+  - live status: tape width, type, colours and errors;
   - follows the inserted cassette automatically;
   - the preview is dot-accurate and drawn in the real tape and ink colours.
-- **Printing:** copies, auto cut, chain printing, and feed margin.
-- **Files and CLI:** save and load labels (`.twlabel`), export PNG at 180 dpi, and a command-line interface for scripting.
+- **Printing:** copies, auto cut, chain printing, feed margin, and a calibration ruler.
+- **Files and CLI:** save and load labels (`.twlabel`, JSON), export PNG at 180 dpi, and a command-line interface for scripting.
 
 ## Installation
+
+**Requirements:**
+- Python ≥ 3.10
+- GTK ≥ 4.10 and libadwaita ≥ 1.5, with PyGObject
+- pycairo, Pillow and libusb-1.0
+- optional: `python-qrcode` for QR codes and librsvg for SVG images
 
 ### Arch Linux
 
 ```sh
-cd packaging/arch && makepkg -si
+git clone https://github.com/dimschlukas/tapewright.git
+cd tapewright/packaging/arch && makepkg -si
 ```
 
 ### Other distributions
@@ -73,15 +73,18 @@ Install the system packages first:
 
 | Distribution | Command |
 |---|---|
-| Debian / Ubuntu | `sudo apt install python3-gi python3-gi-cairo python3-pil gir1.2-gtk-4.0 gir1.2-adw-1 libusb-1.0-0 python3-qrcode` |
-| Fedora | `sudo dnf install python3-gobject python3-cairo python3-pillow gtk4 libadwaita libusb1 python3-qrcode` |
+| Debian 13 / Ubuntu 24.04 or newer | `sudo apt install python3-gi python3-gi-cairo python3-pil gir1.2-gtk-4.0 gir1.2-adw-1 libusb-1.0-0 python3-qrcode pipx` |
+| Fedora | `sudo dnf install python3-gobject python3-cairo python3-pillow gtk4 libadwaita libusb1 python3-qrcode pipx` |
 
 Then install Tapewright and its desktop integration:
 
 ```sh
-pipx install --system-site-packages .      # or: pip install --user .
-sudo make install-data reload-udev          # launcher, icon, udev rule
+git clone https://github.com/dimschlukas/tapewright.git && cd tapewright
+pipx install --system-site-packages .
+sudo make install-data reload-udev    # launcher, icon, file type, udev rule
 ```
+
+Replug the printer afterwards so the new udev rule applies.
 
 ### Run from source without installing
 
@@ -89,47 +92,50 @@ sudo make install-data reload-udev          # launcher, icon, udev rule
 python3 -m tapewright
 ```
 
-### Permissions
+## Usage
 
-The udev rule `data/60-tapewright.rules` gives the logged-in user access to the printer.
-Install it with `make install-data` and replug the printer.
-Without the rule, Tapewright falls back to `/dev/usb/lp0`, which requires membership in group `lp`.
+Start *Tapewright* from your application menu, or run `tapewright`.
+Add elements with **Add**, edit them in the *Element* tab, and print with **Print** (Ctrl+P).
 
-### Editor Lite mode
+| Action | Mouse / keyboard |
+|---|---|
+| Move | drag an element; arrow keys nudge 1 dot, Shift+arrows 1 mm |
+| Resize | drag the square handle at the bottom-right corner |
+| Rotate | drag the round handle above the element (15° snapping; hold Shift for free rotation), Ctrl+R / Ctrl+Shift+R for 90° |
+| Select several | Ctrl/Shift+click, drag a box over empty space, Ctrl+A |
+| Snap off | hold Shift while dragging |
+| Context menu | right-click an element: align, centre, front/back, duplicate, delete |
+| Duplicate / delete | Ctrl+D / Delete |
+| Undo / redo | Ctrl+Z / Ctrl+Shift+Z |
+| New, open, save, export PNG | Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+E |
 
-If the green *Editor Lite* LED is lit, the printer appears as a USB drive instead of a printer.
-Hold the Editor Lite button until the LED goes off.
-
-## Command line
+### Command line
 
 ```sh
-tapewright                                    # GUI
 tapewright status
 tapewright print -t "Hello\nWorld" -b rounded -c 3
 tapewright print examples/asset-tag.twlabel -c 10 -n 1   # serial numbers 1..10
 tapewright render -t "Test" --qr https://example.com -o out.png
+tapewright calibrate                                     # print a 100 mm ruler
 ```
 
-Run `tapewright print --help` for all options.
+Run `tapewright <command> --help` for all options.
 
-## Development
+## Troubleshooting
 
-```sh
-make test            # hardware-free unit tests
-```
+- **"Cannot open printer" or a permissions error:** install the udev rule with `sudo make install-data reload-udev`, then replug the printer.
+  Without the rule, Tapewright falls back to `/dev/usb/lp0`, which requires membership in group `lp`.
+- **Printer not found and a USB drive appears instead:** the green *Editor Lite* LED is lit.
+  Hold the Editor Lite button until it goes off.
+- **The printed piece is longer than the label:** the printer adds a blank feed margin at each end (2 mm by default; *Print → Feed margin*).
+  The preview shows it hatched, and the ruler measures the whole cut piece.
+- **Lengths seem wrong:** print *Print → Print calibration ruler*.
+  The distance from the 0 line to the 100 line should be exactly 100 mm.
 
-The code is organised as follows:
+## Contributing
 
-| File | Contents |
-|---|---|
-| `tapewright/usb.py` | libusb (ctypes) and usblp transports |
-| `tapewright/protocol.py` | status parsing, PackBits, job builder |
-| `tapewright/render.py` | label model and Cairo/Pango renderer |
-| `tapewright/barcode.py` | Code 128 encoder |
-| `tapewright/gui.py` | GTK 4 / libadwaita editor |
-| `tapewright/cli.py` | command line |
-
-[docs/PROTOCOL.md](docs/PROTOCOL.md) describes the printer protocol.
+Bug reports, printer compatibility reports and pull requests are welcome.
+See [CONTRIBUTING.md](CONTRIBUTING.md); the printer protocol is documented in [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ## License
 

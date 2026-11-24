@@ -16,9 +16,10 @@
     <ul>
       <li>Text in any installed font, auto-sized to the tape</li>
       <li>Images, QR codes and Code 128 barcodes</li>
+      <li>Drag and drop layout with snapping, rotation, alignment and undo</li>
       <li>Borders, inverted printing, fixed or automatic length</li>
       <li>Serial numbers and date/time variables</li>
-      <li>Live printer status and a dot-accurate preview in the real tape colours</li>
+      <li>Live printer status and a dot-accurate preview with real-size rulers</li>
     </ul>
     <p>
       Brother and P-touch are trademarks of Brother Industries, Ltd. This project is not
@@ -28,14 +29,33 @@
   <launchable type="desktop-id">io.github.dimschlukas.Tapewright.desktop</launchable>
   <url type="homepage">https://github.com/dimschlukas/tapewright</url>
   <url type="bugtracker">https://github.com/dimschlukas/tapewright/issues</url>
+  <url type="vcs-browser">https://github.com/dimschlukas/tapewright</url>
+  <url type="contribute">https://github.com/dimschlukas/tapewright/blob/main/CONTRIBUTING.md</url>
   <screenshots>
     <screenshot type="default">
+      <caption>Designing a label with a QR code and a serial number</caption>
       <image>https://raw.githubusercontent.com/dimschlukas/tapewright/main/docs/screenshot.png</image>
     </screenshot>
   </screenshots>
   <content_rating type="oars-1.1"/>
+  <branding>
+    <color type="primary" scheme_preference="light">#f6d32d</color>
+    <color type="primary" scheme_preference="dark">#7a6a12</color>
+  </branding>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
   <releases>
-    <release version="0.1.0" date="2026-11-24"/>
+    <release version="0.1.0" date="2026-11-24">
+      <description>
+        <p>First public release.</p>
+      </description>
+      <url type="details">https://github.com/dimschlukas/tapewright/blob/main/CHANGELOG.md</url>
+    </release>
   </releases>
   <provides>
     <binary>tapewright</binary>

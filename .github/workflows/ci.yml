@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ruff lint
+        run: pipx run ruff==0.17.6 check tapewright tests
+      - name: Ruff format
+        run: pipx run ruff==0.17.6 format --check tapewright tests
+
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi python3-gi-cairo gir1.2-pango-1.0 python3-pil python3-qrcode \
+            fonts-dejavu-core desktop-file-utils appstream
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Command line smoke test
+        run: |
+          python3 -m tapewright --version
+          python3 -m tapewright render -t "CI test" --qr https://example.com -o /tmp/ci.png
+      - name: Validate desktop file and AppStream metadata
+        run: |
+          desktop-file-validate data/io.github.dimschlukas.Tapewright.desktop
+          appstreamcli validate --no-net data/io.github.dimschlukas.Tapewright.metainfo.xml

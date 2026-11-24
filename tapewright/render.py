@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 dimschlukas
 """Label model and renderer (Cairo/Pango at the printer's native 180 dpi)."""
+
 from __future__ import annotations
 
 import datetime as _dt
@@ -59,6 +60,7 @@ def rotated_size(w, h, angle):
         return h, w
     return w * c + h * s, w * s + h * c
 
+
 @dataclass
 class TextElement:
     x_mm: float = 0.0
@@ -67,16 +69,16 @@ class TextElement:
     rotation: int = 0
     kind: str = "text"
     text: str = "Label"
-    font: str = "Sans Bold"          # Pango description without size
+    font: str = "Sans Bold"  # Pango description without size
     auto_size: bool = True
-    size: float = 16.0               # points (used when auto_size is off)
-    fit_glyphs: bool = False         # auto size to visible glyphs, not line height
-    align: str = "center"            # left/center/right (between lines)
+    size: float = 16.0  # points (used when auto_size is off)
+    fit_glyphs: bool = False  # auto size to visible glyphs, not line height
+    align: str = "center"  # left/center/right (between lines)
     line_spacing: float = 1.0
-    letter_spacing: float = 0.0      # points
+    letter_spacing: float = 0.0  # points
     underline: bool = False
     strike: bool = False
-    v_offset: float = 0.0            # mm, positive moves down
+    v_offset: float = 0.0  # mm, positive moves down
 
     def title(self):
         t = self.text.replace("\n", " ⏎ ").strip()
@@ -109,7 +111,7 @@ class QRElement:
     kind: str = "qr"
     data: str = "https://example.com"
     height_pct: float = 100.0
-    error_correction: str = "M"      # L/M/Q/H
+    error_correction: str = "M"  # L/M/Q/H
 
     def title(self):
         return f"QR: {self.data}"
@@ -123,9 +125,9 @@ class BarcodeElement:
     rotation: int = 0
     kind: str = "barcode"
     data: str = "123456"
-    module: int = 2                  # dots per narrow bar
+    module: int = 2  # dots per narrow bar
     show_text: bool = True
-    text_size: float = 6.0           # points
+    text_size: float = 6.0  # points
     height_pct: float = 100.0
 
     def title(self):
@@ -140,17 +142,23 @@ class SpacerElement:
     rotation: int = 0
     kind: str = "spacer"
     width_mm: float = 3.0
-    line: bool = False               # draw a vertical separator line
-    line_width: int = 2              # dots
+    line: bool = False  # draw a vertical separator line
+    line_width: int = 2  # dots
 
     def title(self):
         return f"Spacer {self.width_mm:g} mm" + (" | line" if self.line else "")
 
 
-ELEMENT_TYPES = {c.kind: c for c in
-                 (TextElement, ImageElement, QRElement, BarcodeElement, SpacerElement)}
-ELEMENT_NAMES = {"text": "Text", "image": "Image", "qr": "QR code",
-                 "barcode": "Barcode", "spacer": "Spacer"}
+ELEMENT_TYPES = {
+    c.kind: c for c in (TextElement, ImageElement, QRElement, BarcodeElement, SpacerElement)
+}
+ELEMENT_NAMES = {
+    "text": "Text",
+    "image": "Image",
+    "qr": "QR code",
+    "barcode": "Barcode",
+    "spacer": "Spacer",
+}
 
 
 def element_from_dict(d):
@@ -162,17 +170,17 @@ def element_from_dict(d):
 @dataclass
 class Label:
     tape_width: int = 12
-    length_mm: float = 0.0           # 0 = automatic
-    pad_start_mm: float = 2.0        # blank space before the first element
-    pad_end_mm: float = 2.0          # blank space after the last element
-    v_pad_mm: float = 0.0            # vertical padding inside border
-    gap_mm: float = 2.0              # gap between elements
-    content_align: str = "center"    # for fixed-length labels (flow layout)
-    layout: str = "flow"             # flow = automatic left->right, free = drag & drop
+    length_mm: float = 0.0  # 0 = automatic
+    pad_start_mm: float = 2.0  # blank space before the first element
+    pad_end_mm: float = 2.0  # blank space after the last element
+    v_pad_mm: float = 0.0  # vertical padding inside border
+    gap_mm: float = 2.0  # gap between elements
+    content_align: str = "center"  # for fixed-length labels (flow layout)
+    layout: str = "flow"  # flow = automatic left->right, free = drag & drop
     invert: bool = False
-    border: str = "none"             # none/rect/rounded/double
-    border_width: int = 3            # dots
-    border_inset: int = 0            # dots from tape print edge
+    border: str = "none"  # none/rect/rounded/double
+    border_width: int = 3  # dots
+    border_inset: int = 0  # dots from tape print edge
     border_radius_mm: float = 1.5
     threshold: int = 128
     elements: list = field(default_factory=lambda: [TextElement()])
@@ -186,7 +194,7 @@ class Label:
     def from_json(cls, s):
         d = json.loads(s)
         names = {f.name for f in fields(cls)}
-        if "pad_mm" in d:            # files from before start/end padding were split
+        if "pad_mm" in d:  # files from before start/end padding were split
             d.setdefault("pad_start_mm", d["pad_mm"])
             d.setdefault("pad_end_mm", d["pad_mm"])
         kw = {k: v for k, v in d.items() if k in names and k != "elements"}
@@ -197,8 +205,10 @@ class Label:
     def uses_counter(self):
         """True if any element contains the {n} serial number variable."""
         pat = re.compile(r"\{n(:[^}]*)?\}")
-        return any(pat.search(getattr(e, "text", "") or getattr(e, "data", "") or "")
-                   for e in self.elements)
+        return any(
+            pat.search(getattr(e, "text", "") or getattr(e, "data", "") or "")
+            for e in self.elements
+        )
 
 
 # ---------------------------------------------------------------- variables
@@ -223,6 +233,7 @@ def expand(text: str, n: int = 1, now=None) -> str:
 
 
 # ---------------------------------------------------------------- rendering
+
 
 class RenderError(Exception):
     pass
@@ -253,8 +264,11 @@ def _make_layout(cr, el: TextElement, size_pt: float, text: str):
     desc = Pango.FontDescription.from_string(el.font or "Sans")
     desc.set_size(max(1, int(size_pt * Pango.SCALE)))
     layout.set_font_description(desc)
-    layout.set_alignment({"left": Pango.Alignment.LEFT, "right": Pango.Alignment.RIGHT}
-                         .get(el.align, Pango.Alignment.CENTER))
+    layout.set_alignment(
+        {"left": Pango.Alignment.LEFT, "right": Pango.Alignment.RIGHT}.get(
+            el.align, Pango.Alignment.CENTER
+        )
+    )
     if el.line_spacing and el.line_spacing != 1.0:
         layout.set_line_spacing(float(el.line_spacing))
     attrs = Pango.AttrList()
@@ -334,6 +348,7 @@ def _load_image(path, target_h):
     if path.lower().endswith((".svg", ".svgz")):
         gi.require_version("Rsvg", "2.0")
         from gi.repository import Rsvg
+
         handle = Rsvg.Handle.new_from_file(path)
         ok, w, h = handle.get_intrinsic_size_in_pixels()
         if not ok or not w or not h:
@@ -347,8 +362,9 @@ def _load_image(path, target_h):
         vp.x, vp.y, vp.width, vp.height = 0, 0, tw, target_h
         handle.render_document(c, vp)
         surf.flush()
-        img = Image.frombuffer("RGBA", (tw, target_h), bytes(surf.get_data()),
-                               "raw", "BGRA", surf.get_stride(), 1).convert("L")
+        img = Image.frombuffer(
+            "RGBA", (tw, target_h), bytes(surf.get_data()), "raw", "BGRA", surf.get_stride(), 1
+        ).convert("L")
     else:
         src = Image.open(path)
         src = ImageOps.exif_transpose(src)
@@ -373,7 +389,7 @@ def _mask_from_bitmap(bits: Image.Image):
     data = bytearray(stride * h)
     raw = alpha.tobytes()
     for y in range(h):
-        data[y * stride:y * stride + w] = raw[y * w:(y + 1) * w]
+        data[y * stride : y * stride + w] = raw[y * w : (y + 1) * w]
     return cairo.ImageSurface.create_for_data(data, cairo.FORMAT_A8, w, h, stride), data
 
 
@@ -405,12 +421,21 @@ def _measure_qr(cr, el: QRElement, avail_h, ctx):
         return 0, 0, None
     try:
         import qrcode
-        from qrcode.constants import ERROR_CORRECT_H, ERROR_CORRECT_L, ERROR_CORRECT_M, ERROR_CORRECT_Q
+        from qrcode.constants import (
+            ERROR_CORRECT_H,
+            ERROR_CORRECT_L,
+            ERROR_CORRECT_M,
+            ERROR_CORRECT_Q,
+        )
     except ImportError:
         ctx.warnings.append("QR codes need the python 'qrcode' package")
         return 0, 0, None
-    ec = {"L": ERROR_CORRECT_L, "M": ERROR_CORRECT_M, "Q": ERROR_CORRECT_Q,
-          "H": ERROR_CORRECT_H}.get(el.error_correction, ERROR_CORRECT_M)
+    ec = {
+        "L": ERROR_CORRECT_L,
+        "M": ERROR_CORRECT_M,
+        "Q": ERROR_CORRECT_Q,
+        "H": ERROR_CORRECT_H,
+    }.get(el.error_correction, ERROR_CORRECT_M)
     qr = qrcode.QRCode(error_correction=ec, border=0)
     qr.add_data(data)
     qr.make(fit=True)
@@ -487,13 +512,18 @@ def _measure_spacer(cr, el: SpacerElement, avail_h, ctx):
     return w, avail_h, draw
 
 
-_MEASURE = {"text": _measure_text, "image": _measure_image, "qr": _measure_qr,
-            "barcode": _measure_barcode, "spacer": _measure_spacer}
+_MEASURE = {
+    "text": _measure_text,
+    "image": _measure_image,
+    "qr": _measure_qr,
+    "barcode": _measure_barcode,
+    "spacer": _measure_spacer,
+}
 
 
 @dataclass
 class RenderResult:
-    bitmap: Image.Image      # mode 'L', 0 = ink, size (length, printable height)
+    bitmap: Image.Image  # mode 'L', 0 = ink, size (length, printable height)
     length_dots: int
     print_height: int
     warnings: list
@@ -501,16 +531,16 @@ class RenderResult:
     # coordinates with y relative to the top of the printable area; None if
     # the element produced nothing
     boxes: list = field(default_factory=list)
-    content_top: int = 0      # top of the content area inside border/padding
+    content_top: int = 0  # top of the content area inside border/padding
     content_height: int = 0
-    frame: int = 0            # border thickness incl. inset
-    side_start: float = 0     # x where content starts (border + start padding)
-    side_end: float = 0       # distance from the label end to where content ends
+    frame: int = 0  # border thickness incl. inset
+    side_start: float = 0  # x where content starts (border + start padding)
+    side_end: float = 0  # distance from the label end to where content ends
     # free layout with automatic length: the label is trimmed so the leftmost
     # element starts at the start padding. x_shift (dots) was added to every
     # element's x_mm; to store a label x back: x_mm = (x - x_shift) / DOTS_PER_MM
     x_shift: float = 0
-    sizes: list = field(default_factory=list)   # unrotated (w, h) per element
+    sizes: list = field(default_factory=list)  # unrotated (w, h) per element
 
     @property
     def length_mm(self):
@@ -541,8 +571,9 @@ def _measure(scr, el, el_avail, ctx):
         if again[2] is not None:
             w, h, draw = again
     elif not scalable(el) and bh > el_avail + 0.5 and not ctx.free:
-        ctx.warnings.append(f"Rotated {ELEMENT_NAMES[el.kind].lower()} is taller "
-                            f"than the tape is wide")
+        ctx.warnings.append(
+            f"Rotated {ELEMENT_NAMES[el.kind].lower()} is taller than the tape is wide"
+        )
     bw, bh = rotated_size(w, h, ang)
     return bw, bh, w, h, draw, ang
 
@@ -574,7 +605,7 @@ def render(label: Label, n: int = 1, x_shift: float | None = None) -> RenderResu
     fixed = bool(label.length_mm and label.length_mm > 0)
     boxes = [None] * len(label.elements)
     sizes = [None] * len(label.elements)
-    items = []    # (index, box_w, box_h, w, h, draw, rotation)
+    items = []  # (index, box_w, box_h, w, h, draw, rotation)
     for i, el in enumerate(label.elements):
         el_avail = avail
         if ctx.free and el.h_mm > 0:
@@ -611,8 +642,10 @@ def render(label: Label, n: int = 1, x_shift: float | None = None) -> RenderResu
                 ctx.warnings.append("Some content lies beyond the end of the label")
         else:
             L = max(1, math.ceil(content_right + side_end))
-        if any(b and (b[0] < frame - 0.5 or b[1] < frame - 0.5 or b[1] + b[3] > H - frame + 0.5)
-               for b in boxes):
+        if any(
+            b and (b[0] < frame - 0.5 or b[1] < frame - 0.5 or b[1] + b[3] > H - frame + 0.5)
+            for b in boxes
+        ):
             ctx.warnings.append("Some content lies outside the printable area and is cut off")
     else:
         content_w = sum(it[1] for it in items) + gap * max(0, len(items) - 1)
@@ -621,7 +654,9 @@ def render(label: Label, n: int = 1, x_shift: float | None = None) -> RenderResu
             spare = L - side_start - side_end - content_w
             if spare < 0:
                 need = (content_w + side_start + side_end) / DOTS_PER_MM
-                ctx.warnings.append(f"Content needs {need:.1f} mm but label is {label.length_mm:g} mm")
+                ctx.warnings.append(
+                    f"Content needs {need:.1f} mm but label is {label.length_mm:g} mm"
+                )
             x = side_start + {"left": 0, "right": spare}.get(label.content_align, spare / 2)
         else:
             L = None
@@ -629,7 +664,7 @@ def render(label: Label, n: int = 1, x_shift: float | None = None) -> RenderResu
         for i, w, h, *_ in items:
             boxes[i] = (round(x), round(top + (avail - h) / 2), w, h)
             x += w + gap
-        if L is None:   # same formula as the free layout, so converting is exact
+        if L is None:  # same formula as the free layout, so converting is exact
             content_right = max((b[0] + b[2] for b in boxes if b), default=side_start)
             L = max(1, math.ceil(content_right + side_end))
 
@@ -642,6 +677,7 @@ def render(label: Label, n: int = 1, x_shift: float | None = None) -> RenderResu
 
     # border
     if label.border != "none" and bw > 0:
+
         def frame_path(inset, radius):
             x, y = inset + bw / 2, inset + bw / 2
             w, h = L - 2 * x, H - 2 * y
@@ -683,20 +719,22 @@ def render(label: Label, n: int = 1, x_shift: float | None = None) -> RenderResu
     cr.restore()
     surf.flush()
 
-    img = Image.frombuffer("RGBX", (L, H), bytes(surf.get_data()), "raw", "BGRX",
-                           surf.get_stride(), 1).convert("L")
+    img = Image.frombuffer(
+        "RGBX", (L, H), bytes(surf.get_data()), "raw", "BGRX", surf.get_stride(), 1
+    ).convert("L")
     thr = label.threshold
     img = img.point(lambda v: 255 if v >= thr else 0)
     if label.invert:
         img = ImageOps.invert(img)
-    return RenderResult(img, L, H, ctx.warnings, boxes, top, avail, frame,
-                        side_start, side_end, shift, sizes)
+    return RenderResult(
+        img, L, H, ctx.warnings, boxes, top, avail, frame, side_start, side_end, shift, sizes
+    )
 
 
 def freeze_layout(label: Label, result: RenderResult):
     """Switch a label to the free layout, keeping every element where the
     current (flow) layout put it."""
-    for el, box, size in zip(label.elements, result.boxes, result.sizes):
+    for el, box, size in zip(label.elements, result.boxes, result.sizes, strict=True):
         if box is None:
             continue
         x, y, w, h = box
@@ -716,7 +754,7 @@ def to_raster_lines(result: RenderResult, tape_width: int) -> list[bytes]:
     cols = full.transpose(Image.Transpose.TRANSPOSE)
     raw = cols.tobytes()
     bpl = HEAD_PINS // 8
-    return [raw[i * bpl:(i + 1) * bpl] for i in range(result.length_dots)]
+    return [raw[i * bpl : (i + 1) * bpl] for i in range(result.length_dots)]
 
 
 def ruler_label(tape_width: int, length_mm: float = 100.0) -> RenderResult:
@@ -749,6 +787,11 @@ def ruler_label(tape_width: int, length_mm: float = 100.0) -> RenderResult:
             cr.move_to(x - lg.width / 2, 0)
             PangoCairo.show_layout(cr, lay)
     surf.flush()
-    img = Image.frombuffer("RGBX", (L, pins), bytes(surf.get_data()), "raw", "BGRX",
-                           surf.get_stride(), 1).convert("L").point(lambda v: 255 if v >= 128 else 0)
+    img = (
+        Image.frombuffer(
+            "RGBX", (L, pins), bytes(surf.get_data()), "raw", "BGRX", surf.get_stride(), 1
+        )
+        .convert("L")
+        .point(lambda v: 255 if v >= 128 else 0)
+    )
     return RenderResult(img, L, pins, [], [], 0, pins, 0)

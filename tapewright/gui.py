@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 dimschlukas
 """GTK4 / libadwaita label editor for Brother P-touch printers."""
+
 from __future__ import annotations
 
 import copy
@@ -18,19 +19,31 @@ gi.require_version("Pango", "1.0")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
 from . import render as R  # noqa: E402
-from .protocol import (COLOR_RGB, TAPE_GEOMETRY, TAPE_LABEL, TAPE_WIDTHS,  # noqa: E402
-                       JobOptions, Printer, PrinterError)
+from .protocol import (  # noqa: E402
+    COLOR_RGB,
+    TAPE_GEOMETRY,
+    TAPE_LABEL,
+    TAPE_WIDTHS,
+    JobOptions,
+    Printer,
+    PrinterError,
+)
 from .usb import USBError, open_printer  # noqa: E402
 
 APP_ID = "io.github.dimschlukas.Tapewright"
 FILE_EXT = ".twlabel"
 APP_NAME = "Tapewright"
 from . import __version__ as VERSION  # noqa: E402
+
 WEBSITE = "https://github.com/dimschlukas/tapewright"
 
-ICONS = {"text": "insert-text-symbolic", "image": "image-x-generic-symbolic",
-         "qr": "view-grid-symbolic", "barcode": "view-continuous-symbolic",
-         "spacer": "view-dual-symbolic"}
+ICONS = {
+    "text": "insert-text-symbolic",
+    "image": "image-x-generic-symbolic",
+    "qr": "view-grid-symbolic",
+    "barcode": "view-continuous-symbolic",
+    "spacer": "view-dual-symbolic",
+}
 
 ALIGN = ["left", "center", "right"]
 ALIGN_NAMES = ["Left", "Center", "Right"]
@@ -39,13 +52,16 @@ BORDER_NAMES = ["None", "Rectangle", "Rounded", "Double"]
 EC = ["L", "M", "Q", "H"]
 EC_NAMES = ["Low (7%)", "Medium (15%)", "Quartile (25%)", "High (30%)"]
 
-PREVIEW_MAX_H = 380   # max height of the preview area in pixels
+PREVIEW_MAX_H = 380  # max height of the preview area in pixels
 
-VAR_HELP = ("Variables: {date}  {time}  {datetime}  {date:%d.%m.%Y}  "
-            "{n}  {n:03d} (serial number, increases per copy)")
+VAR_HELP = (
+    "Variables: {date}  {time}  {datetime}  {date:%d.%m.%Y}  "
+    "{n}  {n:03d} (serial number, increases per copy)"
+)
 
 
 # ------------------------------------------------------------------ helpers
+
 
 def esc(t):
     return GLib.markup_escape_text(t) if t else t
@@ -100,7 +116,18 @@ def group(title=None, desc=None):
     return g
 
 
+def accent_color():
+    """System accent colour (libadwaita >= 1.6), else the default Adwaita blue."""
+    try:
+        return Adw.StyleManager.get_default().get_accent_color_rgba()
+    except AttributeError:
+        c = Gdk.RGBA()
+        c.parse("#3584e4")
+        return c
+
+
 # ------------------------------------------------------------------ preview
+
 
 class Preview(Gtk.DrawingArea):
     """Tape preview and drag & drop canvas.
@@ -108,12 +135,13 @@ class Preview(Gtk.DrawingArea):
     Label coordinates are printer dots: x from the left end of the label,
     y from the top of the printable area (same as RenderResult.boxes).
     """
-    PAD = 24            # right padding
-    PAD_L = 52          # left padding (room for the vertical ruler)
-    TOP = 38            # space above the tape (room for the rotation handle)
-    HANDLE = 9          # resize handle size in screen pixels
-    ROT_OFF = 22        # distance of the rotation handle above the box
-    SNAP_PX = 6         # snapping distance in screen pixels
+
+    PAD = 24  # right padding
+    PAD_L = 52  # left padding (room for the vertical ruler)
+    TOP = 38  # space above the tape (room for the rotation handle)
+    HANDLE = 9  # resize handle size in screen pixels
+    ROT_OFF = 22  # distance of the rotation handle above the box
+    SNAP_PX = 6  # snapping distance in screen pixels
 
     def __init__(self, win):
         super().__init__()
@@ -122,7 +150,7 @@ class Preview(Gtk.DrawingArea):
         self.zoom = 3.0
         self.hover = None
         self.drag = None
-        self.band = None     # rubber band (x0, y0, x1, y1) in label coordinates
+        self.band = None  # rubber band (x0, y0, x1, y1) in label coordinates
         self.angle_text = None
         self.guides = []
         self.set_draw_func(self.draw)
@@ -155,8 +183,14 @@ class Preview(Gtk.DrawingArea):
         s1.append("Rotate counter-clockwise", "win.el-rotate-ccw")
         menu.append_section(None, s1)
         align = Gio.Menu()
-        for label, kind in (("Left", "left"), ("Center", "hcenter"), ("Right", "right"),
-                            ("Top", "top"), ("Middle", "vcenter"), ("Bottom", "bottom")):
+        for label, kind in (
+            ("Left", "left"),
+            ("Center", "hcenter"),
+            ("Right", "right"),
+            ("Top", "top"),
+            ("Middle", "vcenter"),
+            ("Bottom", "bottom"),
+        ):
             align.append(label, f"win.el-align::{kind}")
         dist = Gio.Menu()
         dist.append("Distribute horizontally", "win.el-distribute::h")
@@ -203,8 +237,12 @@ class Preview(Gtk.DrawingArea):
 
     def _sel_box_screen(self):
         res, sel = self.result, self.win.sel
-        if (not res or len(self.win.selected) != 1 or not (0 <= sel < len(res.boxes))
-                or not res.boxes[sel]):
+        if (
+            not res
+            or len(self.win.selected) != 1
+            or not (0 <= sel < len(res.boxes))
+            or not res.boxes[sel]
+        ):
             return None
         x, y, w, h = res.boxes[sel]
         x0, py = self.origin()
@@ -216,7 +254,7 @@ class Preview(Gtk.DrawingArea):
         if not b:
             return False
         hx, hy = b[0] + b[2] / 2, b[1] - self.ROT_OFF
-        return (sx - hx) ** 2 + (sy - hy) ** 2 <= 8 ** 2
+        return (sx - hx) ** 2 + (sy - hy) ** 2 <= 8**2
 
     def to_label(self, sx, sy):
         x0, py = self.origin()
@@ -228,14 +266,22 @@ class Preview(Gtk.DrawingArea):
         tol = 2 / self.zoom
         for i in range(len(self.result.boxes) - 1, -1, -1):
             b = self.result.boxes[i]
-            if b and b[0] - tol <= lx <= b[0] + b[2] + tol and b[1] - tol <= ly <= b[1] + b[3] + tol:
+            if (
+                b
+                and b[0] - tol <= lx <= b[0] + b[2] + tol
+                and b[1] - tol <= ly <= b[1] + b[3] + tol
+            ):
                 return i
         return None
 
     def on_handle(self, sx, sy):
         res, sel = self.result, self.win.sel
-        if (not res or len(self.win.selected) != 1 or not (0 <= sel < len(res.boxes))
-                or not res.boxes[sel]):
+        if (
+            not res
+            or len(self.win.selected) != 1
+            or not (0 <= sel < len(res.boxes))
+            or not res.boxes[sel]
+        ):
             return False
         x, y, w, h = res.boxes[sel]
         x0, py = self.origin()
@@ -279,8 +325,10 @@ class Preview(Gtk.DrawingArea):
     @staticmethod
     def _mods(gesture):
         st = gesture.get_current_event_state()
-        return (bool(st & Gdk.ModifierType.SHIFT_MASK),
-                bool(st & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK)))
+        return (
+            bool(st & Gdk.ModifierType.SHIFT_MASK),
+            bool(st & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK)),
+        )
 
     # ---------------------------------------------------------- gestures
     def _drag_begin(self, gesture, sx, sy):
@@ -292,23 +340,39 @@ class Preview(Gtk.DrawingArea):
         _, toggle = self._mods(gesture)
         lx, ly = self.to_label(sx, sy)
         win = self.win
-        base = {"started": False, "origin": self.origin(), "shift": self.result.x_shift,
-                "toggle": toggle, "start": (lx, ly)}
+        base = {
+            "started": False,
+            "origin": self.origin(),
+            "shift": self.result.x_shift,
+            "toggle": toggle,
+            "start": (lx, ly),
+        }
         if self.on_rot_handle(sx, sy):
             idx = win.sel
             b = self._sel_box_screen()
             cx, cy = b[0] + b[2] / 2, b[1] + b[3] / 2
             el = win.label.elements[idx]
-            self.drag = dict(base, mode="rotate", idx=idx, center=(cx, cy), pointer=(sx, sy),
-                             angle0=math.degrees(math.atan2(sx - cx, cy - sy)),
-                             rot0=float(el.rotation))
+            self.drag = dict(
+                base,
+                mode="rotate",
+                idx=idx,
+                center=(cx, cy),
+                pointer=(sx, sy),
+                angle0=math.degrees(math.atan2(sx - cx, cy - sy)),
+                rot0=float(el.rotation),
+            )
             return
         if self.on_handle(sx, sy):
             idx = win.sel
             el = win.label.elements[idx]
-            self.drag = dict(base, mode="resize", idx=idx, box=self.result.boxes[idx],
-                             size=getattr(el, "size", None),
-                             unrot_h=(self.result.sizes[idx] or (0, 4))[1])
+            self.drag = dict(
+                base,
+                mode="resize",
+                idx=idx,
+                box=self.result.boxes[idx],
+                size=getattr(el, "size", None),
+                unrot_h=(self.result.sizes[idx] or (0, 4))[1],
+            )
             return
         idx = self.hit(lx, ly)
         if idx is None:
@@ -321,11 +385,14 @@ class Preview(Gtk.DrawingArea):
                 gesture.set_state(Gtk.EventSequenceState.DENIED)
                 return
         elif idx in win.selected:
-            win.set_primary(idx)            # keep the group so it can be dragged
+            win.set_primary(idx)  # keep the group so it can be dragged
         else:
             win.select_only(idx)
-        boxes = {i: self.result.boxes[i] for i in win.selected
-                 if i < len(self.result.boxes) and self.result.boxes[i]}
+        boxes = {
+            i: self.result.boxes[i]
+            for i in win.selected
+            if i < len(self.result.boxes) and self.result.boxes[i]
+        }
         self.drag = dict(base, mode="move", idx=idx, box=self.result.boxes[idx], boxes=boxes)
 
     def _drag_update(self, gesture, ox, oy):
@@ -416,7 +483,7 @@ class Preview(Gtk.DrawingArea):
         elif d and d["started"]:
             win.drag_finished()
         elif d and d["mode"] == "move" and not d["toggle"]:
-            win.select_only(d["idx"])       # plain click inside a group: select just this
+            win.select_only(d["idx"])  # plain click inside a group: select just this
         self.queue_draw()
 
     def _pressed(self, gesture, n_press, sx, sy):
@@ -475,8 +542,12 @@ class Preview(Gtk.DrawingArea):
             win.duplicate()
             return True
         step = R.DOTS_PER_MM if shift else 1
-        moves = {Gdk.KEY_Left: (-step, 0), Gdk.KEY_Right: (step, 0),
-                 Gdk.KEY_Up: (0, -step), Gdk.KEY_Down: (0, step)}
+        moves = {
+            Gdk.KEY_Left: (-step, 0),
+            Gdk.KEY_Right: (step, 0),
+            Gdk.KEY_Up: (0, -step),
+            Gdk.KEY_Down: (0, step),
+        }
         if keyval in moves:
             win.nudge(*moves[keyval])
             return True
@@ -496,7 +567,7 @@ class Preview(Gtk.DrawingArea):
         x0, py = self.origin(width)
         y0 = self.TOP
         f = self.feed()
-        tx0, tx1 = x0 - f * z, x0 + (L + f) * z      # cut edges of the printed piece
+        tx0, tx1 = x0 - f * z, x0 + (L + f) * z  # cut edges of the printed piece
         tape_rgb, ink_rgb = self.win.tape_colors()
         fg = self.get_color()
 
@@ -550,7 +621,7 @@ class Preview(Gtk.DrawingArea):
         cr.restore()
 
         # selection / hover overlays (not printed)
-        acc = Adw.StyleManager.get_default().get_accent_color_rgba()
+        acc = accent_color()
         selected = self.win.selected
         single = len(selected) == 1
         for i, b in enumerate(res.boxes):
@@ -685,7 +756,7 @@ class Preview(Gtk.DrawingArea):
                 cr.move_to(rx - 9 - ext.x_advance, y + ext.height / 2)
                 cr.show_text(t)
             m += 1
-        if tape_mm != int(tape_mm):          # 3.5 mm tape: mark the far edge too
+        if tape_mm != int(tape_mm):  # 3.5 mm tape: mark the far edge too
             y = round(y0 + tape_px) + 0.5
             cr.move_to(rx, y)
             cr.line_to(rx - 7, y)
@@ -699,6 +770,7 @@ class Preview(Gtk.DrawingArea):
 
 
 # ------------------------------------------------------------------ window
+
 
 class MainWindow(Adw.ApplicationWindow):
     def __init__(self, app, path=None):
@@ -787,7 +859,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.status_icon = Gtk.Image.new_from_icon_name("printer-symbolic")
         self.status_label = Gtk.Label(label="Looking for printer…", xalign=0, hexpand=True)
         self.status_label.set_ellipsize(Pango.EllipsizeMode.END)
-        refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh printer status")
+        refresh = Gtk.Button(
+            icon_name="view-refresh-symbolic", tooltip_text="Refresh printer status"
+        )
         refresh.add_css_class("flat")
         refresh.connect("clicked", lambda *_: self.poll_status(force=True))
         sbar.append(self.status_icon)
@@ -799,8 +873,9 @@ class MainWindow(Adw.ApplicationWindow):
                 b.add_css_class("flat")
                 (self.tool_multi if "distribute" in icon else self.tool_single).append(b)
                 tools.append(b)
-            tools.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL,
-                                       margin_start=4, margin_end=4))
+            tools.append(
+                Gtk.Separator(orientation=Gtk.Orientation.VERTICAL, margin_start=4, margin_end=4)
+            )
         tools.remove(tools.get_last_child())
         sbar.append(refresh)
         root.append(sbar)
@@ -852,17 +927,21 @@ class MainWindow(Adw.ApplicationWindow):
         add_menu = Gio.Menu()
         for kind, name in R.ELEMENT_NAMES.items():
             add_menu.append(name, f"win.add-element::{kind}")
-        add_btn = Gtk.MenuButton(label="Add", icon_name="list-add-symbolic", menu_model=add_menu,
-                                 tooltip_text="Add element")
+        add_btn = Gtk.MenuButton(
+            label="Add",
+            icon_name="list-add-symbolic",
+            menu_model=add_menu,
+            tooltip_text="Add element",
+        )
         add_btn.set_always_show_arrow(True)
         tb.append(add_btn)
         tb.append(Gtk.Box(hexpand=True))
-        for icon, tip, cb in (("go-up-symbolic", "Move up (earlier / further back)",
-                               lambda *_: self.move(-1)),
-                              ("go-down-symbolic", "Move down (later / further front)",
-                               lambda *_: self.move(1)),
-                              ("edit-copy-symbolic", "Duplicate", lambda *_: self.duplicate()),
-                              ("user-trash-symbolic", "Delete", lambda *_: self.delete())):
+        for icon, tip, cb in (
+            ("go-up-symbolic", "Move up (earlier / further back)", lambda *_: self.move(-1)),
+            ("go-down-symbolic", "Move down (later / further front)", lambda *_: self.move(1)),
+            ("edit-copy-symbolic", "Duplicate", lambda *_: self.duplicate()),
+            ("user-trash-symbolic", "Delete", lambda *_: self.delete()),
+        ):
             b = Gtk.Button(icon_name=icon, tooltip_text=tip)
             b.add_css_class("flat")
             b.connect("clicked", cb)
@@ -875,8 +954,9 @@ class MainWindow(Adw.ApplicationWindow):
         lsw = Gtk.ScrolledWindow(vexpand=True)
         lsw.set_child(self.listbox)
         left.append(lsw)
-        self.hint = hint = Gtk.Label(wrap=True, xalign=0, margin_start=12, margin_end=12,
-                                     margin_bottom=8)
+        self.hint = hint = Gtk.Label(
+            wrap=True, xalign=0, margin_start=12, margin_end=12, margin_bottom=8
+        )
         hint.add_css_class("dim-label")
         hint.add_css_class("caption")
         left.append(hint)
@@ -891,8 +971,12 @@ class MainWindow(Adw.ApplicationWindow):
         self.element_page = Gtk.ScrolledWindow(vexpand=True)
         self.label_page = Gtk.ScrolledWindow(vexpand=True)
         self.print_page = Gtk.ScrolledWindow(vexpand=True)
-        self.stack.add_titled_with_icon(self.element_page, "element", "Element", "document-edit-symbolic")
-        self.stack.add_titled_with_icon(self.label_page, "label", "Label & Border", "view-paged-symbolic")
+        self.stack.add_titled_with_icon(
+            self.element_page, "element", "Element", "document-edit-symbolic"
+        )
+        self.stack.add_titled_with_icon(
+            self.label_page, "label", "Label & Border", "view-paged-symbolic"
+        )
         self.stack.add_titled_with_icon(self.print_page, "print", "Print", "printer-symbolic")
         right.append(self.stack)
         paned.set_end_child(right)
@@ -977,7 +1061,7 @@ class MainWindow(Adw.ApplicationWindow):
         js = self.label.to_json()
         if self.hist_pos >= 0 and self.history[self.hist_pos] == js:
             return False
-        del self.history[self.hist_pos + 1:]
+        del self.history[self.hist_pos + 1 :]
         self.history.append(js)
         if len(self.history) > 200:
             del self.history[0]
@@ -1175,7 +1259,7 @@ class MainWindow(Adw.ApplicationWindow):
             rx1 = max(b[0] + b[2] for b in boxes.values())
             ry0 = min(b[1] for b in boxes.values())
             ry1 = max(b[1] + b[3] for b in boxes.values())
-        for i, (x, y, w, h) in boxes.items():
+        for i, (_x, _y, w, h) in boxes.items():
             if kind == "left":
                 self._place(i, x=rx0)
             elif kind == "hcenter":
@@ -1261,13 +1345,17 @@ class MainWindow(Adw.ApplicationWindow):
 
     def update_hint(self):
         if self.label.layout == "free":
-            self.hint.set_text("Drag elements in the preview; drag the corner handle to resize. "
-                               "Ctrl/Shift+click or drag a box to select several. Shift while "
-                               "dragging disables snapping, arrow keys nudge. Lower in the list "
-                               "= in front.")
+            self.hint.set_text(
+                "Drag elements in the preview; drag the corner handle to resize. "
+                "Ctrl/Shift+click or drag a box to select several. Shift while "
+                "dragging disables snapping, arrow keys nudge. Lower in the list "
+                "= in front."
+            )
         else:
-            self.hint.set_text("Elements are placed left → right along the tape. "
-                               "Drag one in the preview to position it freely.")
+            self.hint.set_text(
+                "Elements are placed left → right along the tape. "
+                "Drag one in the preview to position it freely."
+            )
 
     def schedule_render(self):
         if not self._render_pending:
@@ -1288,9 +1376,11 @@ class MainWindow(Adw.ApplicationWindow):
         tw = self.label.tape_width
         pins = TAPE_GEOMETRY[tw][0]
         feed = self.job.margin_dots / R.DOTS_PER_MM
-        info = (f"Label {res.length_mm:.1f} mm  ·  cut piece {res.length_mm + 2 * feed:.1f} mm "
-                f"(incl. {feed:.1f} mm feed at each end)  ·  {TAPE_LABEL[tw]} tape  ·  "
-                f"printable height {pins / R.DOTS_PER_MM:.1f} mm")
+        info = (
+            f"Label {res.length_mm:.1f} mm  ·  cut piece {res.length_mm + 2 * feed:.1f} mm "
+            f"(incl. {feed:.1f} mm feed at each end)  ·  {TAPE_LABEL[tw]} tape  ·  "
+            f"printable height {pins / R.DOTS_PER_MM:.1f} mm"
+        )
         if self.label.uses_counter():
             info += f"  ·  preview shows n = {self.counter_start}"
         if res.warnings:
@@ -1344,11 +1434,11 @@ class MainWindow(Adw.ApplicationWindow):
             sel = {self.sel}
         if not sel and n and self.sel >= n:
             sel = {n - 1}
-        self.selected = set()          # force a page rebuild
+        self.selected = set()  # force a page rebuild
         self._apply_selection(sel, self.sel if self.sel in sel else None, show=False)
 
     def update_row_titles(self):
-        for lb, el in zip(self.row_labels, self.label.elements):
+        for lb, el in zip(self.row_labels, self.label.elements, strict=False):
             lb.set_text(el.title())
 
     def add_element(self, kind):
@@ -1360,12 +1450,14 @@ class MainWindow(Adw.ApplicationWindow):
         pos = self.sel + 1 if self.sel >= 0 else len(self.label.elements)
         if self.label.layout == "free" and self.result:
             res = self.result
-            right = max((b[0] + b[2] for b in res.boxes if b),
-                        default=res.side_start - R.mm(self.label.gap_mm))
+            right = max(
+                (b[0] + b[2] for b in res.boxes if b),
+                default=res.side_start - R.mm(self.label.gap_mm),
+            )
             el.x_mm = (round(right + R.mm(self.label.gap_mm)) - res.x_shift) / R.DOTS_PER_MM
             el.y_mm = res.content_top / R.DOTS_PER_MM
             el.h_mm = res.content_height / R.DOTS_PER_MM
-            pos = len(self.label.elements)          # new elements go on top
+            pos = len(self.label.elements)  # new elements go on top
         self.label.elements.insert(pos, el)
         self.sel = pos
         self.selected = {pos}
@@ -1396,7 +1488,7 @@ class MainWindow(Adw.ApplicationWindow):
                 dup.y_mm += 1
             dups.append(dup)
         if self.label.layout == "free":
-            start = len(self.label.elements)        # duplicates go on top
+            start = len(self.label.elements)  # duplicates go on top
             self.label.elements.extend(dups)
         else:
             start = idx[-1] + 1
@@ -1430,10 +1522,13 @@ class MainWindow(Adw.ApplicationWindow):
             self._page(self.element_page, self._multi_groups())
             return
         if not (0 <= self.sel < len(self.label.elements)):
-            st = Adw.StatusPage(title="Nothing selected", icon_name="list-add-symbolic",
-                                description="Click an element in the preview or the list, "
-                                            "or use “Add” to put text, images, QR codes or "
-                                            "barcodes on the label.")
+            st = Adw.StatusPage(
+                title="Nothing selected",
+                icon_name="list-add-symbolic",
+                description="Click an element in the preview or the list, "
+                "or use “Add” to put text, images, QR codes or "
+                "barcodes on the label.",
+            )
             self.element_page.set_child(st)
             return
         el = self.label.elements[self.sel]
@@ -1455,31 +1550,73 @@ class MainWindow(Adw.ApplicationWindow):
     def _align_buttons(self, labels=False):
         """Rows of alignment buttons: [(icon, tooltip, callback, label)]."""
         return [
-            [("object-rotate-left-symbolic", "Rotate counter-clockwise (Ctrl+Shift+R)",
-              lambda: self.rotate(-90), "Rotate left"),
-             ("object-rotate-right-symbolic", "Rotate clockwise (Ctrl+R)",
-              lambda: self.rotate(90), "Rotate right")],
-            [("tw-align-left-symbolic", "Align left edges", lambda: self.align("left"), "Left"),
-             ("tw-align-hcenter-symbolic", "Align horizontal centres",
-              lambda: self.align("hcenter"), "Center"),
-             ("tw-align-right-symbolic", "Align right edges", lambda: self.align("right"),
-              "Right")],
-            [("tw-align-top-symbolic", "Align top edges", lambda: self.align("top"), "Top"),
-             ("tw-align-vcenter-symbolic", "Align vertical centres",
-              lambda: self.align("vcenter"), "Middle"),
-             ("tw-align-bottom-symbolic", "Align bottom edges", lambda: self.align("bottom"),
-              "Bottom")],
-            [("tw-distribute-h-symbolic", "Distribute horizontally (3 or more)",
-              lambda: self.distribute("h"), "Distribute ↔"),
-             ("tw-distribute-v-symbolic", "Distribute vertically (3 or more)",
-              lambda: self.distribute("v"), "Distribute ↕")],
+            [
+                (
+                    "object-rotate-left-symbolic",
+                    "Rotate counter-clockwise (Ctrl+Shift+R)",
+                    lambda: self.rotate(-90),
+                    "Rotate left",
+                ),
+                (
+                    "object-rotate-right-symbolic",
+                    "Rotate clockwise (Ctrl+R)",
+                    lambda: self.rotate(90),
+                    "Rotate right",
+                ),
+            ],
+            [
+                ("tw-align-left-symbolic", "Align left edges", lambda: self.align("left"), "Left"),
+                (
+                    "tw-align-hcenter-symbolic",
+                    "Align horizontal centres",
+                    lambda: self.align("hcenter"),
+                    "Center",
+                ),
+                (
+                    "tw-align-right-symbolic",
+                    "Align right edges",
+                    lambda: self.align("right"),
+                    "Right",
+                ),
+            ],
+            [
+                ("tw-align-top-symbolic", "Align top edges", lambda: self.align("top"), "Top"),
+                (
+                    "tw-align-vcenter-symbolic",
+                    "Align vertical centres",
+                    lambda: self.align("vcenter"),
+                    "Middle",
+                ),
+                (
+                    "tw-align-bottom-symbolic",
+                    "Align bottom edges",
+                    lambda: self.align("bottom"),
+                    "Bottom",
+                ),
+            ],
+            [
+                (
+                    "tw-distribute-h-symbolic",
+                    "Distribute horizontally (3 or more)",
+                    lambda: self.distribute("h"),
+                    "Distribute ↔",
+                ),
+                (
+                    "tw-distribute-v-symbolic",
+                    "Distribute vertically (3 or more)",
+                    lambda: self.distribute("v"),
+                    "Distribute ↕",
+                ),
+            ],
         ]
 
     def _multi_groups(self):
         n = len(self.selected)
-        g = group(f"{n} elements selected",
-                  "Align or distribute them, rotate each one, or delete them. "
-                  "Click a single element to edit its content.")
+        g = group(
+            f"{n} elements selected",
+            "Align or distribute them, rotate each one, or delete them. "
+            "Click a single element to edit its content.",
+        )
         for row in self._align_buttons():
             bar = Gtk.Box(spacing=6, homogeneous=True, margin_top=6)
             for icon, tip, cb, label in row:
@@ -1491,9 +1628,10 @@ class MainWindow(Adw.ApplicationWindow):
         g2 = group()
         bar = Gtk.Box(spacing=6, homogeneous=True)
         for icon, tip, cb, label in (
-                ("edit-copy-symbolic", "Duplicate (Ctrl+D)", self.duplicate, "Duplicate"),
-                ("go-top-symbolic", "Bring to front", lambda: self.to_end(True), "To front"),
-                ("go-bottom-symbolic", "Send to back", lambda: self.to_end(False), "To back")):
+            ("edit-copy-symbolic", "Duplicate (Ctrl+D)", self.duplicate, "Duplicate"),
+            ("go-top-symbolic", "Bring to front", lambda: self.to_end(True), "To front"),
+            ("go-bottom-symbolic", "Send to back", lambda: self.to_end(False), "To back"),
+        ):
             bar.append(self._tool_button(icon, tip, cb, label))
         g2.add(bar)
         delete = Gtk.Button(label=f"Delete {n} elements", halign=Gtk.Align.CENTER, margin_top=12)
@@ -1505,14 +1643,24 @@ class MainWindow(Adw.ApplicationWindow):
     def _placement_group(self, el):
         free = self.label.layout == "free"
         if free:
-            g = group("Position", "Free layout: drag in the preview or enter exact values. "
-                                  "Positions are measured like the rulers.")
+            g = group(
+                "Position",
+                "Free layout: drag in the preview or enter exact values. "
+                "Positions are measured like the rulers.",
+            )
         else:
             g = group("Placement")
 
-        rot = spin_row("Rotation (°)", float(el.rotation), 0, 359.9, 1, 1,
-                       lambda v: abs(v - float(el.rotation)) > 1e-6 and self.rotate(absolute=v),
-                       "Clockwise. Drag the round handle above the element; Shift = no snapping")
+        rot = spin_row(
+            "Rotation (°)",
+            float(el.rotation),
+            0,
+            359.9,
+            1,
+            1,
+            lambda v: abs(v - float(el.rotation)) > 1e-6 and self.rotate(absolute=v),
+            "Clockwise. Drag the round handle above the element; Shift = no snapping",
+        )
         rot.set_wrap(True)
         g.add(rot)
         self.pos_rows.append((lambda: float(el.rotation), rot))
@@ -1543,24 +1691,55 @@ class MainWindow(Adw.ApplicationWindow):
         def set_y(v):
             el.y_mm = round(v * R.DOTS_PER_MM - off_y()) / R.DOTS_PER_MM
             self.changed()
+
         auto_len = not self.label.length_mm
         xv, yv = box(0), box(1)
-        xrow = spin_row("X (mm)", xv if xv is not None else el.x_mm, -500, 2000, 0.1, 2, set_x,
-                        "From the left cut edge. Automatic length: the label starts at the "
-                        "leftmost element" if auto_len else "From the left cut edge")
-        yrow = spin_row("Y (mm)", yv if yv is not None else el.y_mm, -30, 60, 0.1, 2, set_y,
-                        "From the top edge of the tape")
+        xrow = spin_row(
+            "X (mm)",
+            xv if xv is not None else el.x_mm,
+            -500,
+            2000,
+            0.1,
+            2,
+            set_x,
+            "From the left cut edge. Automatic length: the label starts at the leftmost element"
+            if auto_len
+            else "From the left cut edge",
+        )
+        yrow = spin_row(
+            "Y (mm)",
+            yv if yv is not None else el.y_mm,
+            -30,
+            60,
+            0.1,
+            2,
+            set_y,
+            "From the top edge of the tape",
+        )
         g.add(xrow)
         g.add(yrow)
         self.pos_rows += [(lambda: box(0), xrow), (lambda: box(1), yrow)]
         if el.kind == "text" and not el.auto_size:
-            srow = spin_row("Size (pt)", el.size, 2, 200, 0.5, 1, self._set(el, "size"),
-                            "The box follows the font size")
+            srow = spin_row(
+                "Size (pt)",
+                el.size,
+                2,
+                200,
+                0.5,
+                1,
+                self._set(el, "size"),
+                "The box follows the font size",
+            )
             g.add(srow)
             self.pos_rows.append((lambda: el.size, srow))
         else:
-            title = {"barcode": "Bar length (mm)", "spacer": "Line length (mm)"}.get(
-                el.kind, "Height (mm)") if not R.scalable(el) else "Height (mm)"
+            title = (
+                {"barcode": "Bar length (mm)", "spacer": "Line length (mm)"}.get(
+                    el.kind, "Height (mm)"
+                )
+                if not R.scalable(el)
+                else "Height (mm)"
+            )
             hrow = spin_row(title, el.h_mm, 0.3, 30, 0.1, 2, self._set(el, "h_mm"))
             g.add(hrow)
             self.pos_rows.append((lambda: el.h_mm, hrow))
@@ -1576,13 +1755,20 @@ class MainWindow(Adw.ApplicationWindow):
         def cb(v):
             setattr(obj, attr, conv(v) if conv else v)
             self.changed(structure=structure)
+
         return cb
 
     def _edit_text(self, el: R.TextElement):
         g1 = group("Text", VAR_HELP)
         tvf = Gtk.Frame()
-        tview = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, top_margin=8, bottom_margin=8,
-                             left_margin=8, right_margin=8, accepts_tab=False)
+        tview = Gtk.TextView(
+            wrap_mode=Gtk.WrapMode.WORD_CHAR,
+            top_margin=8,
+            bottom_margin=8,
+            left_margin=8,
+            right_margin=8,
+            accepts_tab=False,
+        )
         tview.set_size_request(-1, 70)
         buf = tview.get_buffer()
         buf.set_text(el.text)
@@ -1590,6 +1776,7 @@ class MainWindow(Adw.ApplicationWindow):
         def on_text(b):
             el.text = b.get_text(b.get_start_iter(), b.get_end_iter(), False)
             self.changed()
+
         buf.connect("changed", on_text)
         tvf.set_child(tview)
         g1.add(tvf)
@@ -1610,6 +1797,7 @@ class MainWindow(Adw.ApplicationWindow):
                 d.unset_fields(Pango.FontMask.SIZE)
                 el.font = d.to_string()
                 self.changed()
+
         fbtn.connect("notify::font-desc", on_font)
         frow.add_suffix(fbtn)
         g2.add(frow)
@@ -1617,8 +1805,12 @@ class MainWindow(Adw.ApplicationWindow):
         size_row = spin_row("Size (pt)", el.size, 2, 200, 0.5, 1, self._set(el, "size"))
         self.pos_rows.append((lambda: el.size, size_row))
         size_row.set_sensitive(not el.auto_size)
-        fit_row = switch_row("Fit to visible glyphs", el.fit_glyphs, self._set(el, "fit_glyphs"),
-                             "Maximise ink height instead of line height")
+        fit_row = switch_row(
+            "Fit to visible glyphs",
+            el.fit_glyphs,
+            self._set(el, "fit_glyphs"),
+            "Maximise ink height instead of line height",
+        )
         fit_row.set_sensitive(el.auto_size)
 
         def on_auto(v):
@@ -1626,28 +1818,60 @@ class MainWindow(Adw.ApplicationWindow):
             size_row.set_sensitive(not v)
             fit_row.set_sensitive(v)
             self.changed()
+
         g2.add(switch_row("Auto size", el.auto_size, on_auto, "Fill the tape height"))
         g2.add(fit_row)
         g2.add(size_row)
 
         g3 = group("Style")
-        g3.add(combo_row("Line alignment", ALIGN_NAMES, ALIGN.index(el.align),
-                         lambda i: self._set(el, "align")(ALIGN[i])))
-        g3.add(spin_row("Line spacing", el.line_spacing, 0.5, 3, 0.05, 2,
-                        self._set(el, "line_spacing")))
-        g3.add(spin_row("Letter spacing (pt)", el.letter_spacing, -5, 30, 0.1, 1,
-                        self._set(el, "letter_spacing")))
+        g3.add(
+            combo_row(
+                "Line alignment",
+                ALIGN_NAMES,
+                ALIGN.index(el.align),
+                lambda i: self._set(el, "align")(ALIGN[i]),
+            )
+        )
+        g3.add(
+            spin_row(
+                "Line spacing", el.line_spacing, 0.5, 3, 0.05, 2, self._set(el, "line_spacing")
+            )
+        )
+        g3.add(
+            spin_row(
+                "Letter spacing (pt)",
+                el.letter_spacing,
+                -5,
+                30,
+                0.1,
+                1,
+                self._set(el, "letter_spacing"),
+            )
+        )
         g3.add(switch_row("Underline", el.underline, self._set(el, "underline")))
         g3.add(switch_row("Strikethrough", el.strike, self._set(el, "strike")))
-        g3.add(spin_row("Vertical offset (mm)", el.v_offset, -10, 10, 0.1, 1,
-                        self._set(el, "v_offset")))
+        g3.add(
+            spin_row(
+                "Vertical offset (mm)", el.v_offset, -10, 10, 0.1, 1, self._set(el, "v_offset")
+            )
+        )
         return [g1, g2, g3]
 
     def choose_image(self, el):
         dlg = Gtk.FileDialog(title="Choose image")
         filt = Gtk.FileFilter()
         filt.set_name("Images")
-        for p in ("*.png", "*.jpg", "*.jpeg", "*.bmp", "*.gif", "*.svg", "*.webp", "*.tif", "*.tiff"):
+        for p in (
+            "*.png",
+            "*.jpg",
+            "*.jpeg",
+            "*.bmp",
+            "*.gif",
+            "*.svg",
+            "*.webp",
+            "*.tif",
+            "*.tiff",
+        ):
             filt.add_pattern(p)
             filt.add_pattern(p.upper())
         fl = Gio.ListStore.new(Gtk.FileFilter)
@@ -1661,6 +1885,7 @@ class MainWindow(Adw.ApplicationWindow):
                 return
             el.path = f.get_path()
             self.changed(structure=True)
+
         dlg.open(self, None, done)
 
     def _edit_image(self, el: R.ImageElement):
@@ -1671,7 +1896,11 @@ class MainWindow(Adw.ApplicationWindow):
         row.add_suffix(b)
         g.add(row)
         if self.label.layout != "free":
-            g.add(spin_row("Height (% of tape)", el.height_pct, 5, 100, 5, 0, self._set(el, "height_pct")))
+            g.add(
+                spin_row(
+                    "Height (% of tape)", el.height_pct, 5, 100, 5, 0, self._set(el, "height_pct")
+                )
+            )
         thr = spin_row("Threshold", el.threshold, 1, 254, 1, 0, self._set(el, "threshold", int))
         thr.set_sensitive(not el.dither)
 
@@ -1679,8 +1908,15 @@ class MainWindow(Adw.ApplicationWindow):
             el.dither = v
             thr.set_sensitive(not v)
             self.changed()
-        g.add(switch_row("Dither (photos)", el.dither, on_dither,
-                         "Floyd–Steinberg; turn off for logos and line art"))
+
+        g.add(
+            switch_row(
+                "Dither (photos)",
+                el.dither,
+                on_dither,
+                "Floyd–Steinberg; turn off for logos and line art",
+            )
+        )
         g.add(thr)
         g.add(switch_row("Invert", el.invert, self._set(el, "invert")))
         return [g]
@@ -1688,19 +1924,43 @@ class MainWindow(Adw.ApplicationWindow):
     def _edit_qr(self, el: R.QRElement):
         g = group("QR code", VAR_HELP)
         g.add(entry_row("Content (URL, text, …)", el.data, self._set(el, "data")))
-        g.add(combo_row("Error correction", EC_NAMES, EC.index(el.error_correction),
-                        lambda i: self._set(el, "error_correction")(EC[i])))
+        g.add(
+            combo_row(
+                "Error correction",
+                EC_NAMES,
+                EC.index(el.error_correction),
+                lambda i: self._set(el, "error_correction")(EC[i]),
+            )
+        )
         if self.label.layout != "free":
-            g.add(spin_row("Height (% of tape)", el.height_pct, 10, 100, 5, 0, self._set(el, "height_pct")))
+            g.add(
+                spin_row(
+                    "Height (% of tape)", el.height_pct, 10, 100, 5, 0, self._set(el, "height_pct")
+                )
+            )
         return [g]
 
     def _edit_barcode(self, el: R.BarcodeElement):
         g = group("Barcode (Code 128)", VAR_HELP)
         g.add(entry_row("Content", el.data, self._set(el, "data")))
-        g.add(spin_row("Bar width (dots)", el.module, 1, 6, 1, 0, self._set(el, "module", int),
-                       "1 dot = 0.14 mm; 2+ recommended for scanning"))
+        g.add(
+            spin_row(
+                "Bar width (dots)",
+                el.module,
+                1,
+                6,
+                1,
+                0,
+                self._set(el, "module", int),
+                "1 dot = 0.14 mm; 2+ recommended for scanning",
+            )
+        )
         if self.label.layout != "free":
-            g.add(spin_row("Height (% of tape)", el.height_pct, 20, 100, 5, 0, self._set(el, "height_pct")))
+            g.add(
+                spin_row(
+                    "Height (% of tape)", el.height_pct, 20, 100, 5, 0, self._set(el, "height_pct")
+                )
+            )
         ts = spin_row("Text size (pt)", el.text_size, 3, 30, 0.5, 1, self._set(el, "text_size"))
         ts.set_sensitive(el.show_text)
 
@@ -1708,6 +1968,7 @@ class MainWindow(Adw.ApplicationWindow):
             el.show_text = v
             ts.set_sensitive(v)
             self.changed()
+
         g.add(switch_row("Show text", el.show_text, on_show))
         g.add(ts)
         return [g]
@@ -1715,13 +1976,16 @@ class MainWindow(Adw.ApplicationWindow):
     def _edit_spacer(self, el: R.SpacerElement):
         g = group("Spacer", "Adds empty space, optionally with a separator line.")
         g.add(spin_row("Width (mm)", el.width_mm, 0, 200, 0.5, 1, self._set(el, "width_mm")))
-        lw = spin_row("Line width (dots)", el.line_width, 1, 10, 1, 0, self._set(el, "line_width", int))
+        lw = spin_row(
+            "Line width (dots)", el.line_width, 1, 10, 1, 0, self._set(el, "line_width", int)
+        )
         lw.set_sensitive(el.line)
 
         def on_line(v):
             el.line = v
             lw.set_sensitive(v)
             self.changed()
+
         g.add(switch_row("Separator line", el.line, on_line))
         g.add(lw)
         return [g]
@@ -1730,8 +1994,12 @@ class MainWindow(Adw.ApplicationWindow):
     def build_label_page(self):
         lab = self.label
         g1 = group("Tape")
-        self.tape_row = combo_row("Tape width", [TAPE_LABEL[w] for w in TAPE_WIDTHS],
-                                  TAPE_WIDTHS.index(lab.tape_width), self._on_tape)
+        self.tape_row = combo_row(
+            "Tape width",
+            [TAPE_LABEL[w] for w in TAPE_WIDTHS],
+            TAPE_WIDTHS.index(lab.tape_width),
+            self._on_tape,
+        )
         self.tape_row.set_sensitive(not self.auto_tape)
 
         def on_auto(v):
@@ -1739,8 +2007,15 @@ class MainWindow(Adw.ApplicationWindow):
             self.tape_row.set_sensitive(not v)
             if v:
                 self.apply_status_tape()
-        g1.add(switch_row("Use tape in printer", self.auto_tape, on_auto,
-                          "Follow the cassette that is inserted"))
+
+        g1.add(
+            switch_row(
+                "Use tape in printer",
+                self.auto_tape,
+                on_auto,
+                "Follow the cassette that is inserted",
+            )
+        )
         g1.add(self.tape_row)
 
         g2 = group("Length & layout")
@@ -1754,11 +2029,25 @@ class MainWindow(Adw.ApplicationWindow):
                 self.build_element_page()
                 self.update_hint()
             self.changed()
-        g2.add(combo_row("Layout", ["Automatic (left to right)", "Free (drag & drop)"],
-                         1 if lab.layout == "free" else 0, on_layout,
-                         "Free keeps every element where you drag it"))
-        len_row = spin_row("Length (mm)", lab.length_mm or 50, 5, 1000, 1, 1,
-                           lambda v: (setattr(lab, "length_mm", v), self.changed()))
+
+        g2.add(
+            combo_row(
+                "Layout",
+                ["Automatic (left to right)", "Free (drag & drop)"],
+                1 if lab.layout == "free" else 0,
+                on_layout,
+                "Free keeps every element where you drag it",
+            )
+        )
+        len_row = spin_row(
+            "Length (mm)",
+            lab.length_mm or 50,
+            5,
+            1000,
+            1,
+            1,
+            lambda v: (setattr(lab, "length_mm", v), self.changed()),
+        )
         len_row.set_sensitive(lab.length_mm > 0)
 
         def on_fixed(v):
@@ -1766,26 +2055,82 @@ class MainWindow(Adw.ApplicationWindow):
             len_row.set_sensitive(v)
             al_row.set_sensitive(v)
             self.changed()
-        g2.add(switch_row("Fixed length", lab.length_mm > 0, on_fixed,
-                          "Otherwise the label is as long as its content"))
+
+        g2.add(
+            switch_row(
+                "Fixed length",
+                lab.length_mm > 0,
+                on_fixed,
+                "Otherwise the label is as long as its content",
+            )
+        )
         g2.add(len_row)
-        al_row = combo_row("Content alignment", ALIGN_NAMES, ALIGN.index(lab.content_align),
-                           lambda i: self._set(lab, "content_align")(ALIGN[i]))
+        al_row = combo_row(
+            "Content alignment",
+            ALIGN_NAMES,
+            ALIGN.index(lab.content_align),
+            lambda i: self._set(lab, "content_align")(ALIGN[i]),
+        )
         al_row.set_sensitive(lab.length_mm > 0)
         g2.add(al_row)
-        g2.add(spin_row("Start padding (mm)", lab.pad_start_mm, 0, 50, 0.5, 1,
-                        self._set(lab, "pad_start_mm"), "Blank space before the first element"))
-        g2.add(spin_row("End padding (mm)", lab.pad_end_mm, 0, 50, 0.5, 1,
-                        self._set(lab, "pad_end_mm"), "Blank space after the last element"))
-        g2.add(spin_row("Gap between elements (mm)", lab.gap_mm, 0, 50, 0.5, 1, self._set(lab, "gap_mm")))
-        g2.add(spin_row("Vertical padding (mm)", lab.v_pad_mm, 0, 5, 0.1, 1, self._set(lab, "v_pad_mm")))
+        g2.add(
+            spin_row(
+                "Start padding (mm)",
+                lab.pad_start_mm,
+                0,
+                50,
+                0.5,
+                1,
+                self._set(lab, "pad_start_mm"),
+                "Blank space before the first element",
+            )
+        )
+        g2.add(
+            spin_row(
+                "End padding (mm)",
+                lab.pad_end_mm,
+                0,
+                50,
+                0.5,
+                1,
+                self._set(lab, "pad_end_mm"),
+                "Blank space after the last element",
+            )
+        )
+        g2.add(
+            spin_row(
+                "Gap between elements (mm)", lab.gap_mm, 0, 50, 0.5, 1, self._set(lab, "gap_mm")
+            )
+        )
+        g2.add(
+            spin_row(
+                "Vertical padding (mm)", lab.v_pad_mm, 0, 5, 0.1, 1, self._set(lab, "v_pad_mm")
+            )
+        )
 
         g3 = group("Border")
-        bw = spin_row("Line width (dots)", lab.border_width, 1, 12, 1, 0, self._set(lab, "border_width", int),
-                      "1 dot ≈ 0.14 mm")
-        ins = spin_row("Inset (dots)", lab.border_inset, 0, 20, 1, 0, self._set(lab, "border_inset", int))
-        rad = spin_row("Corner radius (mm)", lab.border_radius_mm, 0, 10, 0.25, 2,
-                       self._set(lab, "border_radius_mm"))
+        bw = spin_row(
+            "Line width (dots)",
+            lab.border_width,
+            1,
+            12,
+            1,
+            0,
+            self._set(lab, "border_width", int),
+            "1 dot ≈ 0.14 mm",
+        )
+        ins = spin_row(
+            "Inset (dots)", lab.border_inset, 0, 20, 1, 0, self._set(lab, "border_inset", int)
+        )
+        rad = spin_row(
+            "Corner radius (mm)",
+            lab.border_radius_mm,
+            0,
+            10,
+            0.25,
+            2,
+            self._set(lab, "border_radius_mm"),
+        )
 
         def on_border(i):
             lab.border = BORDERS[i]
@@ -1793,6 +2138,7 @@ class MainWindow(Adw.ApplicationWindow):
                 r.set_sensitive(i != 0)
             rad.set_sensitive(BORDERS[i] in ("rounded", "double"))
             self.changed()
+
         g3.add(combo_row("Style", BORDER_NAMES, BORDERS.index(lab.border), on_border))
         g3.add(bw)
         g3.add(ins)
@@ -1804,9 +2150,18 @@ class MainWindow(Adw.ApplicationWindow):
 
         g4 = group("Appearance")
         g4.add(switch_row("Invert (white on black)", lab.invert, self._set(lab, "invert")))
-        g4.add(spin_row("Darkness threshold", lab.threshold, 1, 254, 1, 0,
-                        self._set(lab, "threshold", int),
-                        "Higher = bolder text when converting to black & white"))
+        g4.add(
+            spin_row(
+                "Darkness threshold",
+                lab.threshold,
+                1,
+                254,
+                1,
+                0,
+                self._set(lab, "threshold", int),
+                "Higher = bolder text when converting to black & white",
+            )
+        )
         self._page(self.label_page, [g1, g2, g3, g4])
 
     def _on_tape(self, i):
@@ -1820,25 +2175,59 @@ class MainWindow(Adw.ApplicationWindow):
         g1 = group("Copies")
         self.copies_row = spin_row("Copies", self.copies, 1, 999, 1, 0, self._on_copies)
         g1.add(self.copies_row)
-        g1.add(spin_row("Serial number start", self.counter_start, 0, 999999, 1, 0,
-                        self._on_counter, "Value of {n} on the first label"))
+        g1.add(
+            spin_row(
+                "Serial number start",
+                self.counter_start,
+                0,
+                999999,
+                1,
+                0,
+                self._on_counter,
+                "Value of {n} on the first label",
+            )
+        )
         g2 = group("Cutting & feed")
-        g2.add(switch_row("Auto cut", job.auto_cut, lambda v: setattr(job, "auto_cut", v),
-                          "Cut after each label"))
-        g2.add(switch_row("Chain printing", job.chain, lambda v: setattr(job, "chain", v),
-                          "Don't feed & cut after the last label (saves tape on the next job)"))
-        g2.add(spin_row("Feed margin (mm)", job.margin_dots / R.DOTS_PER_MM, 0.5, 30, 0.5, 1,
-                        self._on_feed,
-                        "Blank tape before and after the label"))
+        g2.add(
+            switch_row(
+                "Auto cut",
+                job.auto_cut,
+                lambda v: setattr(job, "auto_cut", v),
+                "Cut after each label",
+            )
+        )
+        g2.add(
+            switch_row(
+                "Chain printing",
+                job.chain,
+                lambda v: setattr(job, "chain", v),
+                "Don't feed & cut after the last label (saves tape on the next job)",
+            )
+        )
+        g2.add(
+            spin_row(
+                "Feed margin (mm)",
+                job.margin_dots / R.DOTS_PER_MM,
+                0.5,
+                30,
+                0.5,
+                1,
+                self._on_feed,
+                "Blank tape before and after the label",
+            )
+        )
         g3 = group()
         pb = Gtk.Button(label="Print", halign=Gtk.Align.CENTER)
         pb.add_css_class("suggested-action")
         pb.add_css_class("pill")
         pb.connect("clicked", lambda *_: self.do_print())
         g3.add(pb)
-        g4 = group("Calibration", "Prints a 100 mm ruler. With a correct printer the distance "
-                                  "from the 0 line to the 100 line is exactly 100 mm, and the "
-                                  "blank tape at each end equals the feed margin.")
+        g4 = group(
+            "Calibration",
+            "Prints a 100 mm ruler. With a correct printer the distance "
+            "from the 0 line to the 100 line is exactly 100 mm, and the "
+            "blank tape at each end equals the feed margin.",
+        )
         cb = Gtk.Button(label="Print calibration ruler", halign=Gtk.Align.START)
         cb.connect("clicked", lambda *_: self.print_ruler())
         g4.add(cb)
@@ -1921,6 +2310,7 @@ class MainWindow(Adw.ApplicationWindow):
                 GLib.idle_add(self._on_status, None, None, str(e))
             finally:
                 self.dev_lock.release()
+
         threading.Thread(target=work, daemon=True).start()
 
     def _on_status(self, st, name, err):
@@ -1935,7 +2325,9 @@ class MainWindow(Adw.ApplicationWindow):
             self.status_label.set_text(msg)
         else:
             ok = not st.errors and st.media_type
-            self.status_icon.set_from_icon_name("printer-symbolic" if ok else "printer-warning-symbolic")
+            self.status_icon.set_from_icon_name(
+                "printer-symbolic" if ok else "printer-warning-symbolic"
+            )
             self.status_label.set_text(f"{name}:  {st.summary()}")
             self.apply_status_tape()
         if (prev is None) != (st is None) or (prev and st and prev.raw[24:26] != st.raw[24:26]):
@@ -1955,8 +2347,11 @@ class MainWindow(Adw.ApplicationWindow):
     def print_ruler(self):
         if self.printing:
             return
-        tw = (self.status.tape_width if self.status and self.status.tape_width
-              else self.label.tape_width)
+        tw = (
+            self.status.tape_width
+            if self.status and self.status.tape_width
+            else self.label.tape_width
+        )
         job = copy.copy(self.job)
         job.tape_width = tw
         self.printing = True
@@ -1969,13 +2364,17 @@ class MainWindow(Adw.ApplicationWindow):
                 with self.dev_lock:
                     p = Printer(open_printer())
                     try:
-                        p.print_pages([lines], job,
-                                      progress=lambda m: GLib.idle_add(self.status_label.set_text, m))
+                        p.print_pages(
+                            [lines],
+                            job,
+                            progress=lambda m: GLib.idle_add(self.status_label.set_text, m),
+                        )
                     finally:
                         p.close()
             except Exception as e:  # noqa: BLE001
                 err = str(e)
             GLib.idle_add(self._print_done, err, 1, False)
+
         threading.Thread(target=work, daemon=True).start()
 
     def do_print(self):
@@ -2000,8 +2399,10 @@ class MainWindow(Adw.ApplicationWindow):
             err = None
             try:
                 if label.uses_counter():
-                    pages = [R.to_raster_lines(R.render(label, n=start + i), label.tape_width)
-                             for i in range(copies)]
+                    pages = [
+                        R.to_raster_lines(R.render(label, n=start + i), label.tape_width)
+                        for i in range(copies)
+                    ]
                 else:
                     lines = R.to_raster_lines(R.render(label, n=start), label.tape_width)
                     pages = [lines] * copies
@@ -2014,6 +2415,7 @@ class MainWindow(Adw.ApplicationWindow):
             except Exception as e:  # noqa: BLE001
                 err = str(e)
             GLib.idle_add(self._print_done, err, copies, label.uses_counter())
+
         threading.Thread(target=work, daemon=True).start()
 
     def _print_done(self, err, copies, counter):
@@ -2037,8 +2439,9 @@ class MainWindow(Adw.ApplicationWindow):
         if not self.dirty:
             then()
             return
-        dlg = Adw.AlertDialog(heading="Discard unsaved changes?",
-                              body="The current label has unsaved changes.")
+        dlg = Adw.AlertDialog(
+            heading="Discard unsaved changes?", body="The current label has unsaved changes."
+        )
         dlg.add_response("cancel", "Cancel")
         dlg.add_response("discard", "Discard")
         dlg.set_response_appearance("discard", Adw.ResponseAppearance.DESTRUCTIVE)
@@ -2052,6 +2455,7 @@ class MainWindow(Adw.ApplicationWindow):
         def really():
             self.dirty = False
             self.close()
+
         self.confirm_discard(really)
         return True
 
@@ -2086,6 +2490,7 @@ class MainWindow(Adw.ApplicationWindow):
             except GLib.Error:
                 return
             self.load(f.get_path())
+
         dlg.open(self, None, done)
 
     def load(self, path):
@@ -2105,8 +2510,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.reset_history()
         st = self.status
         if st and st.tape_width and st.tape_width != self.label.tape_width:
-            self.toast_msg(f"This label is for {TAPE_LABEL[self.label.tape_width]} tape; "
-                           f"the printer has {TAPE_LABEL[st.tape_width]}", 6)
+            self.toast_msg(
+                f"This label is for {TAPE_LABEL[self.label.tape_width]} tape; "
+                f"the printer has {TAPE_LABEL[st.tape_width]}",
+                6,
+            )
 
     def save(self, as_new=False):
         if self.path and not as_new:
@@ -2114,8 +2522,9 @@ class MainWindow(Adw.ApplicationWindow):
             return
         dlg = Gtk.FileDialog(title="Save label")
         dlg.set_filters(self._filters())
-        dlg.set_initial_name((os.path.splitext(os.path.basename(self.path))[0] if self.path
-                              else "label") + FILE_EXT)
+        dlg.set_initial_name(
+            (os.path.splitext(os.path.basename(self.path))[0] if self.path else "label") + FILE_EXT
+        )
 
         def done(d, res):
             try:
@@ -2126,6 +2535,7 @@ class MainWindow(Adw.ApplicationWindow):
             if not path.endswith((FILE_EXT, ".json", ".p700")):
                 path += FILE_EXT
             self._write(path)
+
         dlg.save(self, None, done)
 
     def _write(self, path):
@@ -2156,22 +2566,25 @@ class MainWindow(Adw.ApplicationWindow):
                 self.toast_msg("Exported PNG (180 dpi)")
             except Exception as e:  # noqa: BLE001
                 self.toast_msg(f"Export failed: {e}", 6)
+
         dlg.save(self, None, done)
 
     def show_about(self):
-        about = Adw.AboutDialog(application_name=APP_NAME,
-                                application_icon=APP_ID,
-                                version=VERSION,
-                                developer_name="dimschlukas",
-                                website=WEBSITE,
-                                issue_url=WEBSITE + "/issues",
-                                copyright="© 2026 dimschlukas",
-                                comments="Label designer for Brother P-touch label printers "
-                                         "(PT-P700 and compatible) on Linux.\n\n"
-                                         "Brother and P-touch are trademarks of Brother "
-                                         "Industries, Ltd. This project is not affiliated "
-                                         "with or endorsed by Brother.",
-                                license_type=Gtk.License.GPL_3_0)
+        about = Adw.AboutDialog(
+            application_name=APP_NAME,
+            application_icon=APP_ID,
+            version=VERSION,
+            developer_name="dimschlukas",
+            website=WEBSITE,
+            issue_url=WEBSITE + "/issues",
+            copyright="© 2026 dimschlukas",
+            comments="Label designer for Brother P-touch label printers "
+            "(PT-P700 and compatible) on Linux.\n\n"
+            "Brother and P-touch are trademarks of Brother "
+            "Industries, Ltd. This project is not affiliated "
+            "with or endorsed by Brother.",
+            license_type=Gtk.License.GPL_3_0,
+        )
         about.present(self)
 
 

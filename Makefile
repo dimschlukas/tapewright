@@ -6,7 +6,7 @@ DESTDIR ?=
 UDEVDIR ?= /etc/udev/rules.d
 ID      := io.github.dimschlukas.Tapewright
 
-.PHONY: install-data uninstall-data test reload-udev
+.PHONY: install-data uninstall-data test lint reload-udev
 
 install-data:
 	install -Dm644 data/$(ID).desktop      $(DESTDIR)$(PREFIX)/share/applications/$(ID).desktop
@@ -28,3 +28,7 @@ reload-udev:
 
 test:
 	python3 -m unittest discover -s tests -v
+
+lint:
+	ruff check tapewright tests
+	ruff format --check tapewright tests
