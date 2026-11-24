@@ -13,8 +13,8 @@ optdepends=('python-qrcode: QR code elements'
 checkdepends=('python-qrcode')
 makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-# After tagging a release, replace SKIP with the real checksum: `updpkgsums`
-sha256sums=('SKIP')
+# Update for each release with `updpkgsums`
+sha256sums=('6f4ff7c676be2be6d758851d6d477b21b434f3fff1a4ab363cc14d3b86c3233b')
 
 build() {
   cd "$pkgname-$pkgver"
