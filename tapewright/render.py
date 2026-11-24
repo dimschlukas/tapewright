@@ -541,6 +541,8 @@ class RenderResult:
     # element's x_mm; to store a label x back: x_mm = (x - x_shift) / DOTS_PER_MM
     x_shift: float = 0
     sizes: list = field(default_factory=list)  # unrotated (w, h) per element
+    # per element: the height its size was fitted to (for scalable elements)
+    targets: list = field(default_factory=list)
 
     @property
     def length_mm(self):
@@ -605,6 +607,7 @@ def render(label: Label, n: int = 1, x_shift: float | None = None) -> RenderResu
     fixed = bool(label.length_mm and label.length_mm > 0)
     boxes = [None] * len(label.elements)
     sizes = [None] * len(label.elements)
+    targets = [None] * len(label.elements)
     items = []  # (index, box_w, box_h, w, h, draw, rotation)
     for i, el in enumerate(label.elements):
         el_avail = avail
@@ -614,6 +617,7 @@ def render(label: Label, n: int = 1, x_shift: float | None = None) -> RenderResu
         if m:
             items.append((i, *m))
             sizes[i] = (m[2], m[3])
+            targets[i] = el_avail * _pct(el, ctx) / 100
 
     shift = 0
     if ctx.free:
@@ -727,20 +731,36 @@ def render(label: Label, n: int = 1, x_shift: float | None = None) -> RenderResu
     if label.invert:
         img = ImageOps.invert(img)
     return RenderResult(
-        img, L, H, ctx.warnings, boxes, top, avail, frame, side_start, side_end, shift, sizes
+        img,
+        L,
+        H,
+        ctx.warnings,
+        boxes,
+        top,
+        avail,
+        frame,
+        side_start,
+        side_end,
+        shift,
+        sizes,
+        targets,
     )
 
 
 def freeze_layout(label: Label, result: RenderResult):
     """Switch a label to the free layout, keeping every element where the
     current (flow) layout put it."""
-    for el, box, size in zip(label.elements, result.boxes, result.sizes, strict=True):
+    for el, box, size, target in zip(
+        label.elements, result.boxes, result.sizes, result.targets, strict=True
+    ):
         if box is None:
             continue
         x, y, w, h = box
         el.x_mm = round((x - result.x_shift) / DOTS_PER_MM, 4)
         el.y_mm = round(y / DOTS_PER_MM, 4)
-        el.h_mm = round(max(h if scalable(el) else size[1], 2) / DOTS_PER_MM, 4)
+        # scalable content was fitted to `target`; storing that (not the measured
+        # box, which can be a dot smaller after rounding) reproduces it exactly
+        el.h_mm = round(max(target if scalable(el) else size[1], 2) / DOTS_PER_MM, 4)
     label.layout = "free"
 
 
