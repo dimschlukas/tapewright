@@ -38,5 +38,8 @@ tapewright-gui = "tapewright.cli:gui_entry"
 [tool.setuptools]
 packages = ["tapewright"]
 
+[tool.setuptools.package-data]
+tapewright = ["icons/hicolor/scalable/actions/*.svg"]
+
 [tool.setuptools.dynamic]
 version = { attr = "tapewright.__version__" }

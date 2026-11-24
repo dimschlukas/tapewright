@@ -35,14 +35,17 @@ def mm(v):
 # label's layout is "free": position of the element box's top-left corner
 # (x from the label's left end, y from the top of the printable area) and the
 # box height. h_mm == 0 means "not placed yet".
+# `rotation` (0/90/180/270, clockwise) applies in both layouts.
 
-PLACEMENT_FIELDS = ("x_mm", "y_mm", "h_mm")
+PLACEMENT_FIELDS = ("x_mm", "y_mm", "h_mm", "rotation")
+ROTATIONS = (0, 90, 180, 270)
 
 @dataclass
 class TextElement:
     x_mm: float = 0.0
     y_mm: float = 0.0
     h_mm: float = 0.0
+    rotation: int = 0
     kind: str = "text"
     text: str = "Label"
     font: str = "Sans Bold"          # Pango description without size
@@ -66,6 +69,7 @@ class ImageElement:
     x_mm: float = 0.0
     y_mm: float = 0.0
     h_mm: float = 0.0
+    rotation: int = 0
     kind: str = "image"
     path: str = ""
     height_pct: float = 100.0
@@ -82,6 +86,7 @@ class QRElement:
     x_mm: float = 0.0
     y_mm: float = 0.0
     h_mm: float = 0.0
+    rotation: int = 0
     kind: str = "qr"
     data: str = "https://example.com"
     height_pct: float = 100.0
@@ -96,6 +101,7 @@ class BarcodeElement:
     x_mm: float = 0.0
     y_mm: float = 0.0
     h_mm: float = 0.0
+    rotation: int = 0
     kind: str = "barcode"
     data: str = "123456"
     module: int = 2                  # dots per narrow bar
@@ -112,6 +118,7 @@ class SpacerElement:
     x_mm: float = 0.0
     y_mm: float = 0.0
     h_mm: float = 0.0
+    rotation: int = 0
     kind: str = "spacer"
     width_mm: float = 3.0
     line: bool = False               # draw a vertical separator line
@@ -137,7 +144,8 @@ def element_from_dict(d):
 class Label:
     tape_width: int = 12
     length_mm: float = 0.0           # 0 = automatic
-    pad_mm: float = 2.0              # horizontal padding at label ends
+    pad_start_mm: float = 2.0        # blank space before the first element
+    pad_end_mm: float = 2.0          # blank space after the last element
     v_pad_mm: float = 0.0            # vertical padding inside border
     gap_mm: float = 2.0              # gap between elements
     content_align: str = "center"    # for fixed-length labels (flow layout)
@@ -159,6 +167,9 @@ class Label:
     def from_json(cls, s):
         d = json.loads(s)
         names = {f.name for f in fields(cls)}
+        if "pad_mm" in d:            # files from before start/end padding were split
+            d.setdefault("pad_start_mm", d["pad_mm"])
+            d.setdefault("pad_end_mm", d["pad_mm"])
         kw = {k: v for k, v in d.items() if k in names and k != "elements"}
         lab = cls(**kw)
         lab.elements = [element_from_dict(e) for e in d.get("elements", [])]
@@ -243,30 +254,38 @@ def _rect(r):
     return r.x / Pango.SCALE, r.y / Pango.SCALE, r.width / Pango.SCALE, r.height / Pango.SCALE
 
 
+def _text_ref(layout, el, along):
+    """Dimension that auto-size fits to the available height: the text's
+    length when it is rotated by 90/270 degrees, otherwise its height."""
+    ink, logical = layout.get_pixel_extents()
+    if along:
+        return max(ink.x + ink.width, logical.x + logical.width) - min(ink.x, logical.x)
+    return ink.height if el.fit_glyphs else logical.height
+
+
 def _measure_text(cr, el: TextElement, avail_h, ctx):
     text = expand(el.text, ctx.n)
     if not text.strip():
         return 0, 0, None
+    along = el.rotation % 180 == 90
     if el.auto_size:
         probe = _make_layout(cr, el, 100.0, text)
-        ink, logical = probe.get_pixel_extents()
-        ref_h = ink.height if el.fit_glyphs else logical.height
-        if ref_h <= 0:
+        ref = _text_ref(probe, el, along)
+        if ref <= 0:
             return 0, 0, None
-        size = 100.0 * avail_h / ref_h
+        size = 100.0 * avail_h / ref
         layout = _make_layout(cr, el, size, text)
         # correct for non-linear hinting
-        ink, logical = layout.get_pixel_extents()
-        ref_h = ink.height if el.fit_glyphs else logical.height
-        if ref_h > avail_h:
-            size *= avail_h / ref_h
+        ref = _text_ref(layout, el, along)
+        if ref > avail_h:
+            size *= avail_h / ref
             layout = _make_layout(cr, el, size, text)
     else:
         layout = _make_layout(cr, el, el.size, text)
     ink, logical = layout.get_extents()
     ix, iy, iw, ih = _rect(ink)
     lx, ly, lw, lh = _rect(logical)
-    if not el.auto_size and not ctx.free and lh > avail_h + 0.5:
+    if not el.auto_size and not ctx.free and not along and lh > avail_h + 0.5:
         ctx.warnings.append(f"Text “{text[:20]}” is taller than the tape")
     x0 = min(ix, lx)
     width = max(ix + iw, lx + lw) - x0
@@ -356,7 +375,7 @@ def _measure_image(cr, el: ImageElement, avail_h, ctx):
 
     def draw(cr, x, top, h):
         _ = keep
-        cr.mask_surface(surf, round(x), round(top + (h - th) / 2))
+        cr.mask_surface(surf, x, top + (h - th) / 2)
 
     return bits.width, th, draw
 
@@ -388,8 +407,8 @@ def _measure_qr(cr, el: QRElement, avail_h, ctx):
     size = n * module
 
     def draw(cr, x, top, h):
-        y0 = round(top + (h - size) / 2)
-        x0 = round(x)
+        y0 = top + (h - size) / 2
+        x0 = x
         for r, row in enumerate(matrix):
             for c, v in enumerate(row):
                 if v:
@@ -424,10 +443,10 @@ def _measure_barcode(cr, el: BarcodeElement, avail_h, ctx):
 
     def draw(cr, x, top, h):
         y0 = top + (h - total_h) / 2
-        cx = round(x) + quiet
+        cx = x + quiet
         for i, w in enumerate(modules):
             if i % 2 == 0:
-                cr.rectangle(cx, round(y0), w * m, round(bar_h))
+                cr.rectangle(cx, y0, w * m, round(bar_h))
             cx += w * m
         cr.fill()
         if tlayout:
@@ -438,12 +457,12 @@ def _measure_barcode(cr, el: BarcodeElement, avail_h, ctx):
 
 
 def _measure_spacer(cr, el: SpacerElement, avail_h, ctx):
-    w = mm(el.width_mm)
+    w = max(1, round(mm(el.width_mm)))
 
     def draw(cr, x, top, h):
         if el.line:
             lw = max(1, el.line_width)
-            cr.rectangle(round(x + (w - lw) / 2), top, lw, h)
+            cr.rectangle(x + (w - lw) // 2, top, lw, h)
             cr.fill()
 
     return w, avail_h, draw
@@ -466,13 +485,56 @@ class RenderResult:
     content_top: int = 0      # top of the content area inside border/padding
     content_height: int = 0
     frame: int = 0            # border thickness incl. inset
+    side_start: float = 0     # x where content starts (border + start padding)
+    side_end: float = 0       # distance from the label end to where content ends
+    # free layout with automatic length: the label is trimmed so the leftmost
+    # element starts at the start padding. x_shift (dots) was added to every
+    # element's x_mm; to store a label x back: x_mm = (x - x_shift) / DOTS_PER_MM
+    x_shift: float = 0
 
     @property
     def length_mm(self):
         return self.length_dots / DOTS_PER_MM
 
 
-def render(label: Label, n: int = 1) -> RenderResult:
+def size_axis(el):
+    """Which side of an element's box h_mm controls in the free layout.
+
+    Normally the box height. Rotated by 90/270 degrees, a barcode, spacer or
+    fixed-size text has a fixed length, so h_mm then sets the box width."""
+    if el.rotation % 180 == 90 and (el.kind in ("barcode", "spacer") or
+                                    (el.kind == "text" and not el.auto_size)):
+        return "w"
+    return "h"
+
+
+def _measure(scr, el, el_avail, ctx):
+    """Measure an element. Returns (box_w, box_h, w, h, draw, rotation) where box_*
+    is the rotated bounding box and w/h the unrotated size passed to draw."""
+    rot = el.rotation % 360 if el.rotation in ROTATIONS else 0
+    along = rot % 180 == 90
+    w, h, draw = _MEASURE[el.kind](scr, el, el_avail, ctx)
+    if draw is None or w <= 0:
+        return None
+    if along:
+        target = el_avail * _pct(el, ctx) / 100
+        if el.kind == "image" and abs(w - target) > 0.5:
+            # scale the picture so that its rotated height fits the target
+            again = _MEASURE["image"](scr, el, el_avail * target / w, ctx)
+            if again[2] is not None:
+                w, h, draw = again
+        elif el.kind in ("barcode", "spacer") or (el.kind == "text" and not el.auto_size):
+            if w > el_avail + 0.5 and not ctx.free:
+                ctx.warnings.append(f"Rotated {ELEMENT_NAMES[el.kind].lower()} is longer "
+                                    f"than the tape is wide")
+        return h, w, w, h, draw, rot
+    return w, h, w, h, draw, rot
+
+
+def render(label: Label, n: int = 1, x_shift: float | None = None) -> RenderResult:
+    """Render a label. In the free layout with automatic length the label is
+    trimmed to its content; pass x_shift to force a particular trim offset
+    (used while dragging so the canvas doesn't move under the pointer)."""
     pins, _margin = TAPE_GEOMETRY[label.tape_width]
     H = pins
     ctx = _Ctx(label, n)
@@ -491,55 +553,67 @@ def render(label: Label, n: int = 1) -> RenderResult:
     scratch = cairo.ImageSurface(cairo.FORMAT_RGB24, 8, 8)
     scr = cairo.Context(scratch)
     gap = mm(label.gap_mm)
-    side = frame + mm(label.pad_mm)
+    side_start = frame + mm(label.pad_start_mm)
+    side_end = frame + mm(label.pad_end_mm)
     fixed = bool(label.length_mm and label.length_mm > 0)
     boxes = [None] * len(label.elements)
-    items = []    # (index, w, h, draw)
+    items = []    # (index, box_w, box_h, w, h, draw, rotation)
     for i, el in enumerate(label.elements):
         el_avail = avail
         if ctx.free and el.h_mm > 0:
             el_avail = max(2, round(mm(el.h_mm)))
-        w, h, draw = _MEASURE[el.kind](scr, el, el_avail, ctx)
-        if draw is not None and w > 0:
-            items.append((i, w, h, draw))
+        m = _measure(scr, el, el_avail, ctx)
+        if m:
+            items.append((i, *m))
 
+    shift = 0
     if ctx.free:
         # placed elements keep their position; unplaced ones go to the right end
-        right = side
-        for i, w, h, draw in items:
+        right = side_start
+        for i, w, h, *_ in items:
             el = label.elements[i]
             if el.h_mm > 0:
                 boxes[i] = (round(mm(el.x_mm)), round(mm(el.y_mm)), w, h)
                 right = max(right, boxes[i][0] + w + gap)
-        for i, w, h, draw in items:
+        for i, w, h, *_ in items:
             if boxes[i] is None:
                 boxes[i] = (round(right), round(top + (avail - h) / 2), w, h)
                 right += w + gap
-        content_right = max((b[0] + b[2] for b in boxes if b), default=side)
+        if not fixed:
+            # trim: the leftmost element starts exactly at the start padding
+            if x_shift is not None:
+                shift = round(x_shift)
+            elif any(boxes):
+                shift = round(side_start) - min(b[0] for b in boxes if b)
+            boxes = [(b[0] + shift, b[1], b[2], b[3]) if b else None for b in boxes]
+        content_right = max((b[0] + b[2] for b in boxes if b), default=side_start)
         if fixed:
             L = round(mm(label.length_mm))
             if content_right > L - frame + 0.5:
                 ctx.warnings.append("Some content lies beyond the end of the label")
         else:
-            L = max(1, math.ceil(content_right + side))
+            L = max(1, math.ceil(content_right + side_end))
         if any(b and (b[0] < frame - 0.5 or b[1] < frame - 0.5 or b[1] + b[3] > H - frame + 0.5)
                for b in boxes):
             ctx.warnings.append("Some content lies outside the printable area and is cut off")
     else:
-        content_w = sum(w for _, w, _, _ in items) + gap * max(0, len(items) - 1)
+        content_w = sum(it[1] for it in items) + gap * max(0, len(items) - 1)
         if fixed:
             L = round(mm(label.length_mm))
-            spare = L - 2 * side - content_w
+            spare = L - side_start - side_end - content_w
             if spare < 0:
-                ctx.warnings.append(f"Content needs {(content_w + 2 * side) / DOTS_PER_MM:.1f} mm "
-                                    f"but label is {label.length_mm:g} mm")
-            x = side + {"left": 0, "right": spare}.get(label.content_align, spare / 2)
+                need = (content_w + side_start + side_end) / DOTS_PER_MM
+                ctx.warnings.append(f"Content needs {need:.1f} mm but label is {label.length_mm:g} mm")
+            x = side_start + {"left": 0, "right": spare}.get(label.content_align, spare / 2)
         else:
-            L = max(1, math.ceil(content_w + 2 * side))
-            x = side
-        for i, w, h, draw in items:
+            L = None
+            x = side_start
+        for i, w, h, *_ in items:
             boxes[i] = (round(x), round(top + (avail - h) / 2), w, h)
             x += w + gap
+        if L is None:   # same formula as the free layout, so converting is exact
+            content_right = max((b[0] + b[2] for b in boxes if b), default=side_start)
+            L = max(1, math.ceil(content_right + side_end))
 
     surf = cairo.ImageSurface(cairo.FORMAT_RGB24, L, H)
     cr = cairo.Context(surf)
@@ -578,10 +652,15 @@ def render(label: Label, n: int = 1) -> RenderResult:
     cr.save()
     cr.rectangle(frame, frame, max(0, L - 2 * frame), max(0, H - 2 * frame))
     cr.clip()
-    for i, w, h, draw in items:
+    for i, bw_, bh_, w, h, draw, rot in items:
         bx, by, _, _ = boxes[i]
         cr.save()
-        draw(cr, bx, by, h)
+        if rot:
+            cr.translate(bx + bw_ / 2, by + bh_ / 2)
+            cr.rotate(math.radians(rot))
+            draw(cr, -w / 2, -h / 2, h)
+        else:
+            draw(cr, bx, by, h)
         cr.restore()
     cr.restore()
     surf.flush()
@@ -592,7 +671,8 @@ def render(label: Label, n: int = 1) -> RenderResult:
     img = img.point(lambda v: 255 if v >= thr else 0)
     if label.invert:
         img = ImageOps.invert(img)
-    return RenderResult(img, L, H, ctx.warnings, boxes, top, avail, frame)
+    return RenderResult(img, L, H, ctx.warnings, boxes, top, avail, frame,
+                        side_start, side_end, shift)
 
 
 def freeze_layout(label: Label, result: RenderResult):
@@ -602,9 +682,9 @@ def freeze_layout(label: Label, result: RenderResult):
         if box is None:
             continue
         x, y, w, h = box
-        el.x_mm = round(x / DOTS_PER_MM, 4)
+        el.x_mm = round((x - result.x_shift) / DOTS_PER_MM, 4)
         el.y_mm = round(y / DOTS_PER_MM, 4)
-        el.h_mm = round(max(h, 2) / DOTS_PER_MM, 4)
+        el.h_mm = round(max(w if size_axis(el) == "w" else h, 2) / DOTS_PER_MM, 4)
     label.layout = "free"
 
 

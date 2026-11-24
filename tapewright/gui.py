@@ -116,6 +116,7 @@ class Preview(Gtk.DrawingArea):
         self.zoom = 3.0
         self.hover = None
         self.drag = None
+        self.band = None     # rubber band (x0, y0, x1, y1) in label coordinates
         self.guides = []
         self.set_draw_func(self.draw)
         self.set_hexpand(True)
@@ -143,17 +144,30 @@ class Preview(Gtk.DrawingArea):
 
         menu = Gio.Menu()
         s1 = Gio.Menu()
-        s1.append("Bring to front", "win.el-front")
-        s1.append("Send to back", "win.el-back")
+        s1.append("Rotate clockwise", "win.el-rotate-cw")
+        s1.append("Rotate counter-clockwise", "win.el-rotate-ccw")
         menu.append_section(None, s1)
+        align = Gio.Menu()
+        for label, kind in (("Left", "left"), ("Center", "hcenter"), ("Right", "right"),
+                            ("Top", "top"), ("Middle", "vcenter"), ("Bottom", "bottom")):
+            align.append(label, f"win.el-align::{kind}")
+        dist = Gio.Menu()
+        dist.append("Distribute horizontally", "win.el-distribute::h")
+        dist.append("Distribute vertically", "win.el-distribute::v")
+        align.append_section(None, dist)
         s2 = Gio.Menu()
-        s2.append("Center horizontally", "win.el-center-h")
-        s2.append("Center vertically", "win.el-center-v")
+        s2.append_submenu("Align", align)
+        s2.append("Center on label horizontally", "win.el-center-h")
+        s2.append("Center on label vertically", "win.el-center-v")
         menu.append_section(None, s2)
         s3 = Gio.Menu()
-        s3.append("Duplicate", "win.el-duplicate")
-        s3.append("Delete", "win.el-delete")
+        s3.append("Bring to front", "win.el-front")
+        s3.append("Send to back", "win.el-back")
         menu.append_section(None, s3)
+        s4 = Gio.Menu()
+        s4.append("Duplicate", "win.el-duplicate")
+        s4.append("Delete", "win.el-delete")
+        menu.append_section(None, s4)
         self.menu = Gtk.PopoverMenu.new_from_model(menu)
         self.menu.set_parent(self)
         self.menu.set_has_arrow(False)
@@ -190,7 +204,8 @@ class Preview(Gtk.DrawingArea):
 
     def on_handle(self, sx, sy):
         res, sel = self.result, self.win.sel
-        if not res or not (0 <= sel < len(res.boxes)) or not res.boxes[sel]:
+        if (not res or len(self.win.selected) != 1 or not (0 <= sel < len(res.boxes))
+                or not res.boxes[sel]):
             return False
         x, y, w, h = res.boxes[sel]
         x0, py = self.origin()
@@ -210,12 +225,11 @@ class Preview(Gtk.DrawingArea):
     # ---------------------------------------------------------- snapping
     def _targets(self, skip):
         res = self.result
-        side = res.frame + R.mm(self.win.label.pad_mm)
         L, H = res.length_dots, res.print_height
-        xs = [side, L / 2, L - side]
+        xs = [res.side_start, L / 2, L - res.side_end]
         ys = [0, H / 2, H, res.content_top, res.content_top + res.content_height]
         for i, b in enumerate(res.boxes):
-            if b and i != skip:
+            if b and i not in skip:
                 xs += [b[0], b[0] + b[2] / 2, b[0] + b[2]]
                 ys += [b[1], b[1] + b[3] / 2, b[1] + b[3]]
         return xs, ys
@@ -231,26 +245,47 @@ class Preview(Gtk.DrawingArea):
                     best = (d, t)
         return best
 
+    @staticmethod
+    def _mods(gesture):
+        st = gesture.get_current_event_state()
+        return (bool(st & Gdk.ModifierType.SHIFT_MASK),
+                bool(st & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK)))
+
     # ---------------------------------------------------------- gestures
     def _drag_begin(self, gesture, sx, sy):
         self.drag = None
+        self.band = None
         if not self.result:
             return
         self.grab_focus()
+        _, toggle = self._mods(gesture)
         lx, ly = self.to_label(sx, sy)
+        win = self.win
+        base = {"started": False, "origin": self.origin(), "shift": self.result.x_shift,
+                "toggle": toggle, "start": (lx, ly)}
         if self.on_handle(sx, sy):
-            mode, idx = "resize", self.win.sel
-        else:
-            idx = self.hit(lx, ly)
-            mode = "move"
-        if idx is None:
-            gesture.set_state(Gtk.EventSequenceState.DENIED)
+            idx = win.sel
+            el = win.label.elements[idx]
+            self.drag = dict(base, mode="resize", idx=idx, box=self.result.boxes[idx],
+                             size=getattr(el, "size", None))
             return
-        self.win.select_element(idx)
-        el = self.win.label.elements[idx]
-        self.drag = {"mode": mode, "idx": idx, "box": self.result.boxes[idx],
-                     "size": getattr(el, "size", None), "started": False,
-                     "origin": self.origin()}
+        idx = self.hit(lx, ly)
+        if idx is None:
+            self.drag = dict(base, mode="band")
+            return
+        if toggle:
+            win.toggle_select(idx)
+            if idx not in win.selected:
+                self.drag = None
+                gesture.set_state(Gtk.EventSequenceState.DENIED)
+                return
+        elif idx in win.selected:
+            win.set_primary(idx)            # keep the group so it can be dragged
+        else:
+            win.select_only(idx)
+        boxes = {i: self.result.boxes[i] for i in win.selected
+                 if i < len(self.result.boxes) and self.result.boxes[i]}
+        self.drag = dict(base, mode="move", idx=idx, box=self.result.boxes[idx], boxes=boxes)
 
     def _drag_update(self, gesture, ox, oy):
         d = self.drag
@@ -260,45 +295,70 @@ class Preview(Gtk.DrawingArea):
             if abs(ox) + abs(oy) < 3:
                 return
             d["started"] = True
-            self.win.ensure_free()
+            if d["mode"] != "band" and self.win.ensure_free():
+                d["shift"] = self.result.x_shift
+        z = self.zoom
+        if d["mode"] == "band":
+            x0, y0 = d["start"]
+            self.band = (x0, y0, x0 + ox / z, y0 + oy / z)
+            self.queue_draw()
+            return
+        no_snap, _ = self._mods(gesture)
+        snap = not no_snap
         el = self.win.label.elements[d["idx"]]
         bx, by, bw, bh = d["box"]
-        z = self.zoom
-        snap = not (gesture.get_current_event_state() & Gdk.ModifierType.SHIFT_MASK)
+        shift = d["shift"]
         self.guides = []
-        xs, ys = self._targets(d["idx"]) if snap else ([], [])
         if d["mode"] == "move":
-            nx, ny = bx + ox / z, by + oy / z
+            xs, ys = self._targets(set(d["boxes"])) if snap else ([], [])
+            dx, dy = ox / z, oy / z
             if snap:
-                sx = self._snap([nx, nx + bw / 2, nx + bw], xs)
+                sx = self._snap([bx + dx, bx + dx + bw / 2, bx + dx + bw], xs)
                 if sx:
-                    nx += sx[0]
+                    dx += sx[0]
                     self.guides.append(("x", sx[1]))
-                sy = self._snap([ny, ny + bh / 2, ny + bh], ys)
+                sy = self._snap([by + dy, by + dy + bh / 2, by + dy + bh], ys)
                 if sy:
-                    ny += sy[0]
+                    dy += sy[0]
                     self.guides.append(("y", sy[1]))
-            el.x_mm = round(nx) / R.DOTS_PER_MM
-            el.y_mm = round(ny) / R.DOTS_PER_MM
+            for i, (x, y, _, _) in d["boxes"].items():
+                e = self.win.label.elements[i]
+                e.x_mm = (round(x + dx) - shift) / R.DOTS_PER_MM
+                e.y_mm = round(y + dy) / R.DOTS_PER_MM
         else:
+            axis = R.size_axis(el)
             scale = ((bw + ox / z) / max(bw, 1) + (bh + oy / z) / max(bh, 1)) / 2
-            nh = max(4.0, bh * scale)
-            if snap:
-                sy = self._snap([by + nh], ys)
+            base = bw if axis == "w" else bh
+            new = max(4.0, base * scale)
+            if snap and axis == "h":
+                _, ys = self._targets({d["idx"]})
+                sy = self._snap([by + new], ys)
                 if sy:
-                    nh += sy[0]
+                    new = max(4.0, new + sy[0])
                     self.guides.append(("y", sy[1]))
-            nh = max(4.0, nh)
             if el.kind == "text" and not el.auto_size and d["size"]:
-                el.size = round(d["size"] * nh / max(bh, 1), 1)
-            el.h_mm = round(nh) / R.DOTS_PER_MM
-        self.win.live_changed()
+                el.size = round(d["size"] * new / max(base, 1), 1)
+            el.h_mm = round(new) / R.DOTS_PER_MM
+        self.win.live_changed(x_shift=shift)
 
     def _drag_end(self, gesture, ox, oy):
         d, self.drag = self.drag, None
         self.guides = []
-        if d and d["started"]:
-            self.win.drag_finished()
+        win = self.win
+        if d and d["mode"] == "band":
+            band, self.band = self.band, None
+            hits = set()
+            if band and self.result:
+                x0, x1 = sorted((band[0], band[2]))
+                y0, y1 = sorted((band[1], band[3]))
+                for i, b in enumerate(self.result.boxes):
+                    if b and b[0] < x1 and b[0] + b[2] > x0 and b[1] < y1 and b[1] + b[3] > y0:
+                        hits.add(i)
+            win.select_set(hits, add=d["toggle"])
+        elif d and d["started"]:
+            win.drag_finished()
+        elif d and d["mode"] == "move" and not d["toggle"]:
+            win.select_only(d["idx"])       # plain click inside a group: select just this
         self.queue_draw()
 
     def _pressed(self, gesture, n_press, sx, sy):
@@ -308,7 +368,8 @@ class Preview(Gtk.DrawingArea):
         idx = self.hit(*self.to_label(sx, sy))
         if button == Gdk.BUTTON_SECONDARY and idx is not None:
             self.grab_focus()
-            self.win.select_element(idx)
+            if idx not in self.win.selected:
+                self.win.select_only(idx)
             rect = Gdk.Rectangle()
             rect.x, rect.y, rect.width, rect.height = int(sx), int(sy), 1, 1
             self.menu.set_pointing_to(rect)
@@ -335,16 +396,31 @@ class Preview(Gtk.DrawingArea):
             self.queue_draw()
 
     def _key(self, ctl, keyval, keycode, state):
-        if not (0 <= self.win.sel < len(self.win.label.elements)):
+        win = self.win
+        ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
+        shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
+        if ctrl and keyval in (Gdk.KEY_a, Gdk.KEY_A):
+            win.select_set(set(range(len(win.label.elements))))
+            return True
+        if not win.selected:
             return False
-        step = R.DOTS_PER_MM if state & Gdk.ModifierType.SHIFT_MASK else 1
+        if keyval == Gdk.KEY_Escape:
+            win.select_only(win.sel)
+            return True
+        if ctrl and keyval in (Gdk.KEY_r, Gdk.KEY_R):
+            win.rotate(-90 if shift else 90)
+            return True
+        if ctrl and keyval in (Gdk.KEY_d, Gdk.KEY_D):
+            win.duplicate()
+            return True
+        step = R.DOTS_PER_MM if shift else 1
         moves = {Gdk.KEY_Left: (-step, 0), Gdk.KEY_Right: (step, 0),
                  Gdk.KEY_Up: (0, -step), Gdk.KEY_Down: (0, step)}
         if keyval in moves:
-            self.win.nudge(*moves[keyval])
+            win.nudge(*moves[keyval])
             return True
         if keyval in (Gdk.KEY_Delete, Gdk.KEY_BackSpace):
-            self.win.delete()
+            win.delete()
             return True
         return False
 
@@ -387,15 +463,17 @@ class Preview(Gtk.DrawingArea):
 
         # selection / hover overlays (not printed)
         acc = Adw.StyleManager.get_default().get_accent_color_rgba()
+        selected = self.win.selected
+        single = len(selected) == 1
         for i, b in enumerate(res.boxes):
-            if not b or (i != self.win.sel and i != self.hover):
+            if not b or (i not in selected and i != self.hover):
                 continue
             x, y, w, h = b
             rx, ry = round(x0 + x * z) - 1.5, round(py + y * z) - 1.5
             rw, rh = round(w * z) + 3, round(h * z) + 3
-            if i == self.win.sel:
+            if i in selected:
                 cr.set_source_rgba(acc.red, acc.green, acc.blue, 0.95)
-                cr.set_line_width(1.5)
+                cr.set_line_width(2 if i == self.win.sel and not single else 1.5)
                 cr.set_dash([])
             else:
                 cr.set_source_rgba(acc.red, acc.green, acc.blue, 0.6)
@@ -404,7 +482,7 @@ class Preview(Gtk.DrawingArea):
             cr.rectangle(rx, ry, rw, rh)
             cr.stroke()
             cr.set_dash([])
-            if i == self.win.sel:
+            if single and i == self.win.sel:
                 hs = self.HANDLE
                 cr.rectangle(rx + rw - hs / 2, ry + rh - hs / 2, hs, hs)
                 cr.set_source_rgb(1, 1, 1)
@@ -412,6 +490,16 @@ class Preview(Gtk.DrawingArea):
                 cr.set_source_rgba(acc.red, acc.green, acc.blue, 1)
                 cr.set_line_width(1.5)
                 cr.stroke()
+        # rubber band
+        if self.band:
+            bx0, bx1 = sorted((self.band[0], self.band[2]))
+            by0, by1 = sorted((self.band[1], self.band[3]))
+            cr.rectangle(x0 + bx0 * z, py + by0 * z, (bx1 - bx0) * z, (by1 - by0) * z)
+            cr.set_source_rgba(acc.red, acc.green, acc.blue, 0.15)
+            cr.fill_preserve()
+            cr.set_source_rgba(acc.red, acc.green, acc.blue, 0.8)
+            cr.set_line_width(1)
+            cr.stroke()
         # snap guides
         cr.set_source_rgba(0.93, 0.15, 0.55, 0.95)
         cr.set_line_width(1)
@@ -460,6 +548,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.path = None
         self.dirty = False
         self.sel = 0
+        self.selected = set()
         self.copies = 1
         self.counter_start = 1
         self.auto_tape = True
@@ -476,6 +565,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._commit_id = 0
         self.pos_rows = []
         self.text_view = None
+        self.selected = set()
+        self.tool_single = []
+        self.tool_multi = []
 
         self.toast = Adw.ToastOverlay()
         tv = Adw.ToolbarView()
@@ -540,6 +632,24 @@ class MainWindow(Adw.ApplicationWindow):
         refresh.connect("clicked", lambda *_: self.poll_status(force=True))
         sbar.append(self.status_icon)
         sbar.append(self.status_label)
+        tools = Gtk.Box(spacing=0)
+        for row in self._align_buttons():
+            for icon, tip, cb, _label in row:
+                b = self._tool_button(icon, tip, cb)
+                b.add_css_class("flat")
+                (self.tool_multi if "distribute" in icon else self.tool_single).append(b)
+                tools.append(b)
+            tools.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL,
+                                       margin_start=4, margin_end=4))
+        tools.remove(tools.get_last_child())
+        sbar.append(refresh)
+        root.append(sbar)
+
+        # editing toolbar: rotate / align / distribute on the left, zoom on the right
+        tbar = Gtk.Box(spacing=8, margin_start=8, margin_end=12, margin_bottom=4)
+        tools.set_hexpand(True)
+        tbar.append(tools)
+        sbar = tbar
         sbar.append(Gtk.Label(label="Zoom"))
         self.auto_zoom = True
         self.zoom_scale = zoom = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.5, 10, 0.25)
@@ -551,7 +661,6 @@ class MainWindow(Adw.ApplicationWindow):
         fit.add_css_class("flat")
         fit.connect("clicked", lambda *_: self.fit_zoom(force=True))
         sbar.append(fit)
-        sbar.append(refresh)
         root.append(sbar)
 
         # preview
@@ -601,7 +710,8 @@ class MainWindow(Adw.ApplicationWindow):
         left.append(tb)
         self.listbox = Gtk.ListBox()
         self.listbox.add_css_class("navigation-sidebar")
-        self.listbox.connect("row-selected", self._on_row_selected)
+        self.listbox.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
+        self.listbox.connect("selected-rows-changed", self._on_list_selection)
         lsw = Gtk.ScrolledWindow(vexpand=True)
         lsw.set_child(self.listbox)
         left.append(lsw)
@@ -671,6 +781,10 @@ class MainWindow(Adw.ApplicationWindow):
         act("el-back", lambda *_: self.to_end(False))
         act("el-center-h", lambda *_: self.center("h"))
         act("el-center-v", lambda *_: self.center("v"))
+        act("el-align", lambda a, v: self.align(v.get_string()), None, "s")
+        act("el-distribute", lambda a, v: self.distribute(v.get_string()), None, "s")
+        act("el-rotate-cw", lambda *_: self.rotate(90))
+        act("el-rotate-ccw", lambda *_: self.rotate(-90))
         act("el-duplicate", lambda *_: self.duplicate())
         act("el-delete", lambda *_: self.delete())
 
@@ -735,103 +849,256 @@ class MainWindow(Adw.ApplicationWindow):
         self.dirty = True
         self.rebuild_all()
 
-    # ------------------------------------------------------------ canvas editing
-    def select_element(self, idx):
-        if idx != self.sel or self.stack.get_visible_child_name() != "element":
-            self.sel = idx
-            self.listbox.select_row(self.listbox.get_row_at_index(idx))
+    # ------------------------------------------------------------ selection
+    # self.selected is the set of selected element indices; self.sel is the
+    # "primary" one whose properties the Element tab shows (-1 = none).
+
+    def _apply_selection(self, selected, primary=None, show=True):
+        n = len(self.label.elements)
+        selected = {i for i in selected if 0 <= i < n}
+        if primary is None or primary not in selected:
+            primary = self.sel if self.sel in selected else (min(selected) if selected else -1)
+        changed = selected != self.selected or primary != self.sel
+        self.selected, self.sel = selected, primary
+        self._sync_list_selection()
+        if changed or (show and self.stack.get_visible_child_name() != "element"):
             self.build_element_page()
-            self.stack.set_visible_child_name("element")
+            if selected and show:
+                self.stack.set_visible_child_name("element")
+        self.update_tools()
         self.preview.queue_draw()
+
+    def select_only(self, idx):
+        self._apply_selection({idx}, idx)
+
+    def select_element(self, idx):
+        self.select_only(idx)
+
+    def toggle_select(self, idx):
+        sel = set(self.selected)
+        sel ^= {idx}
+        self._apply_selection(sel, idx if idx in sel else None)
+
+    def set_primary(self, idx):
+        if idx != self.sel:
+            self.sel = idx
+            self.build_element_page()
+            self.preview.queue_draw()
+
+    def select_set(self, indices, add=False):
+        self._apply_selection((self.selected | set(indices)) if add else set(indices))
+
+    def _sync_list_selection(self):
+        self._building = True
+        self.listbox.unselect_all()
+        for i in sorted(self.selected):
+            row = self.listbox.get_row_at_index(i)
+            if row:
+                self.listbox.select_row(row)
+        self._building = False
+
+    def _on_list_selection(self, lb):
+        if self._building:
+            return
+        rows = {r.get_index() for r in lb.get_selected_rows()}
+        self._apply_selection(rows)
 
     def focus_editor(self):
         self.stack.set_visible_child_name("element")
         if self.text_view:
             self.text_view.grab_focus()
 
+    # ------------------------------------------------------------ canvas editing
     def ensure_free(self):
         """Switch to the free layout without moving anything. True if switched."""
         if self.label.layout == "free" or self.result is None:
             return False
         R.freeze_layout(self.label, self.result)
+        self.result = R.render(self.label, n=self.counter_start)
+        self.preview.set_result(self.result)
         self.build_label_page()
         self.build_element_page()
         self.update_hint()
         self.toast_msg("Switched to free layout. Change it under Label & Border → Layout.")
         return True
 
-    def live_changed(self):
+    def live_changed(self, x_shift=None):
         """Fast path while dragging: re-render right away, commit undo later."""
         self.dirty = True
         try:
-            self.result = R.render(self.label, n=self.counter_start)
+            self.result = R.render(self.label, n=self.counter_start, x_shift=x_shift)
         except Exception:  # noqa: BLE001
             return
         self.preview.set_result(self.result)
         self.update_pos_rows()
 
     def drag_finished(self):
-        self.update_pos_rows()
         self.changed()
 
     def update_pos_rows(self):
-        if not (0 <= self.sel < len(self.label.elements)) or not self.pos_rows:
+        if not self.pos_rows:
             return
-        el = self.label.elements[self.sel]
         self._building = True
-        for attr, row in self.pos_rows:
-            v = el.size if attr == "size" else getattr(el, attr)
-            if abs(row.get_value() - v) > 1e-6:
+        for getter, row in self.pos_rows:
+            try:
+                v = getter()
+            except (IndexError, TypeError):
+                continue
+            if v is not None and abs(row.get_value() - v) > 1e-6:
                 row.set_value(v)
         self._building = False
 
-    def _box(self):
-        if self.result and 0 <= self.sel < len(self.result.boxes):
-            return self.result.boxes[self.sel]
-        return None
+    def _boxes(self, indices=None):
+        """{index: box} of the selection (or given indices) from the last render."""
+        res = self.result
+        if not res:
+            return {}
+        idx = self.selected if indices is None else indices
+        return {i: res.boxes[i] for i in idx if 0 <= i < len(res.boxes) and res.boxes[i]}
+
+    def _place(self, i, x=None, y=None):
+        """Store a label-coordinate position (dots) on element i."""
+        el = self.label.elements[i]
+        if x is not None:
+            el.x_mm = (round(x) - self.result.x_shift) / R.DOTS_PER_MM
+        if y is not None:
+            el.y_mm = round(y) / R.DOTS_PER_MM
+
+    def _commit_geometry(self):
+        self.live_changed()
+        self.changed()
 
     def nudge(self, dx, dy):
-        box = self._box()
-        if box is None:
+        boxes = self._boxes()
+        if not boxes:
             return
         self.ensure_free()
-        el = self.label.elements[self.sel]
-        el.x_mm = round(box[0] + dx) / R.DOTS_PER_MM
-        el.y_mm = round(box[1] + dy) / R.DOTS_PER_MM
-        self.live_changed()
-        self.changed()
+        for i, (x, y, _, _) in boxes.items():
+            self._place(i, x + dx, y + dy)
+        self._commit_geometry()
 
     def center(self, axis):
-        box = self._box()
-        if box is None:
+        """Center the selection (as a group) on the label."""
+        boxes = self._boxes()
+        if not boxes:
             return
         self.ensure_free()
-        el = self.label.elements[self.sel]
+        boxes = self._boxes()
         res = self.result
-        x, y, w, h = box
+        x0 = min(b[0] for b in boxes.values())
+        y0 = min(b[1] for b in boxes.values())
+        x1 = max(b[0] + b[2] for b in boxes.values())
+        y1 = max(b[1] + b[3] for b in boxes.values())
         if axis == "h":
-            el.x_mm = round((res.length_dots - w) / 2) / R.DOTS_PER_MM
+            dx = (res.length_dots - (x1 - x0)) / 2 - x0
+            for i, b in boxes.items():
+                self._place(i, x=b[0] + dx)
         else:
-            el.y_mm = round(res.content_top + (res.content_height - h) / 2) / R.DOTS_PER_MM
-        self.live_changed()
-        self.changed()
+            dy = res.content_top + (res.content_height - (y1 - y0)) / 2 - y0
+            for i, b in boxes.items():
+                self._place(i, y=b[1] + dy)
+        self._commit_geometry()
+
+    def align(self, kind):
+        """Align the selected elements to each other, or a single one to the label."""
+        boxes = self._boxes()
+        if not boxes:
+            return
+        self.ensure_free()
+        boxes = self._boxes()
+        res = self.result
+        if len(boxes) == 1:
+            rx0, rx1 = res.side_start, res.length_dots - res.side_end
+            ry0, ry1 = res.content_top, res.content_top + res.content_height
+        else:
+            rx0 = min(b[0] for b in boxes.values())
+            rx1 = max(b[0] + b[2] for b in boxes.values())
+            ry0 = min(b[1] for b in boxes.values())
+            ry1 = max(b[1] + b[3] for b in boxes.values())
+        for i, (x, y, w, h) in boxes.items():
+            if kind == "left":
+                self._place(i, x=rx0)
+            elif kind == "hcenter":
+                self._place(i, x=(rx0 + rx1 - w) / 2)
+            elif kind == "right":
+                self._place(i, x=rx1 - w)
+            elif kind == "top":
+                self._place(i, y=ry0)
+            elif kind == "vcenter":
+                self._place(i, y=(ry0 + ry1 - h) / 2)
+            elif kind == "bottom":
+                self._place(i, y=ry1 - h)
+        self._commit_geometry()
+
+    def distribute(self, axis):
+        """Equal gaps between three or more selected elements."""
+        boxes = self._boxes()
+        if len(boxes) < 3:
+            self.toast_msg("Select at least three elements to distribute them")
+            return
+        self.ensure_free()
+        boxes = self._boxes()
+        k = 0 if axis == "h" else 1
+        items = sorted(boxes.items(), key=lambda it: it[1][k] + it[1][k + 2] / 2)
+        start = items[0][1][k]
+        end = items[-1][1][k] + items[-1][1][k + 2]
+        gap = (end - start - sum(b[k + 2] for _, b in items)) / (len(items) - 1)
+        pos = start
+        for i, b in items:
+            if axis == "h":
+                self._place(i, x=pos)
+            else:
+                self._place(i, y=pos)
+            pos += b[k + 2] + gap
+        self._commit_geometry()
+
+    def rotate(self, delta):
+        """Rotate the selection by +-90 degrees, each element around its centre."""
+        old = self._boxes()
+        if not old:
+            return
+        for i in old:
+            el = self.label.elements[i]
+            el.rotation = (el.rotation + delta) % 360
+        if self.label.layout == "free":
+            # keep each element's centre where it was
+            shift = self.result.x_shift
+            res = R.render(self.label, n=self.counter_start, x_shift=shift)
+            for i, (x, y, w, h) in old.items():
+                nb = res.boxes[i]
+                if nb:
+                    el = self.label.elements[i]
+                    el.x_mm = (round(x + w / 2 - nb[2] / 2) - shift) / R.DOTS_PER_MM
+                    el.y_mm = round(y + h / 2 - nb[3] / 2) / R.DOTS_PER_MM
+        self.build_element_page()
+        self._commit_geometry()
 
     def to_end(self, front):
-        if 0 <= self.sel < len(self.label.elements):
-            el = self.label.elements.pop(self.sel)
-            if front:
-                self.label.elements.append(el)
-                self.sel = len(self.label.elements) - 1
-            else:
-                self.label.elements.insert(0, el)
-                self.sel = 0
-            self.changed(structure=True)
+        idx = sorted(self.selected)
+        if not idx:
+            return
+        moving = [self.label.elements[i] for i in idx]
+        rest = [e for i, e in enumerate(self.label.elements) if i not in self.selected]
+        self.label.elements = rest + moving if front else moving + rest
+        start = len(rest) if front else 0
+        primary = start + idx.index(self.sel) if self.sel in idx else start
+        self.selected = set(range(start, start + len(moving)))
+        self.sel = primary
+        self.changed(structure=True)
+
+    def update_tools(self):
+        n = len(self.selected)
+        for b in self.tool_single:
+            b.set_sensitive(n >= 1)
+        for b in self.tool_multi:
+            b.set_sensitive(n >= 3)
 
     def update_hint(self):
         if self.label.layout == "free":
             self.hint.set_text("Drag elements in the preview; drag the corner handle to resize. "
-                               "Shift disables snapping, arrow keys nudge. Lower in the list = "
-                               "in front.")
+                               "Ctrl/Shift+click or drag a box to select several. Shift while "
+                               "dragging disables snapping, arrow keys nudge. Lower in the list "
+                               "= in front.")
         else:
             self.hint.set_text("Elements are placed left → right along the tape. "
                                "Drag one in the preview to position it freely.")
@@ -862,6 +1129,7 @@ class MainWindow(Adw.ApplicationWindow):
             info += "\n⚠ " + "  ⚠ ".join(dict.fromkeys(res.warnings))
         self.info_label.set_text(info)
         self.update_hint()
+        self.update_pos_rows()
         return False
 
     def update_title(self):
@@ -902,24 +1170,18 @@ class MainWindow(Adw.ApplicationWindow):
             self.row_labels.append(lb)
             self.listbox.append(box)
         self._building = False
-        if self.label.elements:
-            self.sel = min(max(self.sel, 0), len(self.label.elements) - 1)
-            self.listbox.select_row(self.listbox.get_row_at_index(self.sel))
-        else:
-            self.sel = -1
-            self.build_element_page()
+        n = len(self.label.elements)
+        sel = {i for i in self.selected if i < n}
+        if not sel and n and 0 <= self.sel < n:
+            sel = {self.sel}
+        if not sel and n and self.sel >= n:
+            sel = {n - 1}
+        self.selected = set()          # force a page rebuild
+        self._apply_selection(sel, self.sel if self.sel in sel else None, show=False)
 
     def update_row_titles(self):
         for lb, el in zip(self.row_labels, self.label.elements):
             lb.set_text(el.title())
-
-    def _on_row_selected(self, lb, row):
-        if self._building:
-            return
-        if row is None:
-            return
-        self.sel = row.get_index()
-        self.build_element_page()
 
     def add_element(self, kind):
         el = R.ELEMENT_TYPES[kind]()
@@ -931,13 +1193,14 @@ class MainWindow(Adw.ApplicationWindow):
         if self.label.layout == "free" and self.result:
             res = self.result
             right = max((b[0] + b[2] for b in res.boxes if b),
-                        default=res.frame + R.mm(self.label.pad_mm) - R.mm(self.label.gap_mm))
-            el.x_mm = round(right + R.mm(self.label.gap_mm)) / R.DOTS_PER_MM
+                        default=res.side_start - R.mm(self.label.gap_mm))
+            el.x_mm = (round(right + R.mm(self.label.gap_mm)) - res.x_shift) / R.DOTS_PER_MM
             el.y_mm = res.content_top / R.DOTS_PER_MM
             el.h_mm = res.content_height / R.DOTS_PER_MM
             pos = len(self.label.elements)          # new elements go on top
         self.label.elements.insert(pos, el)
         self.sel = pos
+        self.selected = {pos}
         self.changed(structure=True)
         self.stack.set_visible_child_name("element")
         if kind == "image":
@@ -950,23 +1213,40 @@ class MainWindow(Adw.ApplicationWindow):
             els = self.label.elements
             els[i], els[j] = els[j], els[i]
             self.sel = j
+            self.selected = {j}
             self.changed(structure=True)
 
     def duplicate(self):
-        if 0 <= self.sel < len(self.label.elements):
-            dup = copy.deepcopy(self.label.elements[self.sel])
+        idx = sorted(self.selected)
+        if not idx:
+            return
+        dups = []
+        for i in idx:
+            dup = copy.deepcopy(self.label.elements[i])
             if self.label.layout == "free":
                 dup.x_mm += 2
                 dup.y_mm += 1
-            self.label.elements.insert(self.sel + 1, dup)
-            self.sel += 1
-            self.changed(structure=True)
+            dups.append(dup)
+        if self.label.layout == "free":
+            start = len(self.label.elements)        # duplicates go on top
+            self.label.elements.extend(dups)
+        else:
+            start = idx[-1] + 1
+            self.label.elements[start:start] = dups
+        self.selected = set(range(start, start + len(dups)))
+        self.sel = start
+        self.changed(structure=True)
 
     def delete(self):
-        if 0 <= self.sel < len(self.label.elements):
-            del self.label.elements[self.sel]
-            self.sel = min(self.sel, len(self.label.elements) - 1)
-            self.changed(structure=True)
+        idx = sorted(self.selected, reverse=True)
+        if not idx:
+            return
+        for i in idx:
+            del self.label.elements[i]
+        n = len(self.label.elements)
+        self.sel = min(idx[-1], n - 1)
+        self.selected = {self.sel} if self.sel >= 0 else set()
+        self.changed(structure=True)
 
     # ------------------------------------------------------------ element editor
     def _page(self, scrolled, groups):
@@ -976,37 +1256,131 @@ class MainWindow(Adw.ApplicationWindow):
         scrolled.set_child(page)
 
     def build_element_page(self):
+        self.pos_rows = []
+        self.text_view = None
+        if len(self.selected) > 1:
+            self._page(self.element_page, self._multi_groups())
+            return
         if not (0 <= self.sel < len(self.label.elements)):
-            st = Adw.StatusPage(title="No element", icon_name="list-add-symbolic",
-                                description="Use “Add” to put text, images, QR codes or "
+            st = Adw.StatusPage(title="Nothing selected", icon_name="list-add-symbolic",
+                                description="Click an element in the preview or the list, "
+                                            "or use “Add” to put text, images, QR codes or "
                                             "barcodes on the label.")
             self.element_page.set_child(st)
             return
         el = self.label.elements[self.sel]
-        self.pos_rows = []
-        self.text_view = None
         builder = getattr(self, f"_edit_{el.kind}")
         groups = builder(el)
-        if self.label.layout == "free":
-            groups.insert(0, self._position_group(el))
+        groups.insert(0, self._placement_group(el))
         self._page(self.element_page, groups)
 
-    def _position_group(self, el):
-        g = group("Position", "Free layout: drag in the preview or enter exact values. "
-                              "X is measured from the left end of the label, Y from the "
-                              "top of the printable area.")
-        rows = {
-            "x_mm": spin_row("X (mm)", el.x_mm, -500, 2000, 0.1, 2, self._set(el, "x_mm")),
-            "y_mm": spin_row("Y (mm)", el.y_mm, -30, 30, 0.1, 2, self._set(el, "y_mm")),
-        }
-        if el.kind == "text" and not el.auto_size:
-            rows["size"] = spin_row("Size (pt)", el.size, 2, 200, 0.5, 1, self._set(el, "size"),
-                                    "Height follows the font size")
+    def _tool_button(self, icon, tip, cb, label=None):
+        b = Gtk.Button(tooltip_text=tip)
+        if label:
+            content = Adw.ButtonContent(icon_name=icon, label=label)
+            b.set_child(content)
         else:
-            rows["h_mm"] = spin_row("Height (mm)", el.h_mm, 0.3, 30, 0.1, 2, self._set(el, "h_mm"))
-        for r in rows.values():
-            g.add(r)
-        self.pos_rows += list(rows.items())
+            b.set_icon_name(icon)
+        b.connect("clicked", lambda *_: cb())
+        return b
+
+    def _align_buttons(self, labels=False):
+        """Rows of alignment buttons: [(icon, tooltip, callback, label)]."""
+        return [
+            [("object-rotate-left-symbolic", "Rotate counter-clockwise (Ctrl+Shift+R)",
+              lambda: self.rotate(-90), "Rotate left"),
+             ("object-rotate-right-symbolic", "Rotate clockwise (Ctrl+R)",
+              lambda: self.rotate(90), "Rotate right")],
+            [("tw-align-left-symbolic", "Align left edges", lambda: self.align("left"), "Left"),
+             ("tw-align-hcenter-symbolic", "Align horizontal centres",
+              lambda: self.align("hcenter"), "Center"),
+             ("tw-align-right-symbolic", "Align right edges", lambda: self.align("right"),
+              "Right")],
+            [("tw-align-top-symbolic", "Align top edges", lambda: self.align("top"), "Top"),
+             ("tw-align-vcenter-symbolic", "Align vertical centres",
+              lambda: self.align("vcenter"), "Middle"),
+             ("tw-align-bottom-symbolic", "Align bottom edges", lambda: self.align("bottom"),
+              "Bottom")],
+            [("tw-distribute-h-symbolic", "Distribute horizontally (3 or more)",
+              lambda: self.distribute("h"), "Distribute ↔"),
+             ("tw-distribute-v-symbolic", "Distribute vertically (3 or more)",
+              lambda: self.distribute("v"), "Distribute ↕")],
+        ]
+
+    def _multi_groups(self):
+        n = len(self.selected)
+        g = group(f"{n} elements selected",
+                  "Align or distribute them, rotate each one, or delete them. "
+                  "Click a single element to edit its content.")
+        for row in self._align_buttons():
+            bar = Gtk.Box(spacing=6, homogeneous=True, margin_top=6)
+            for icon, tip, cb, label in row:
+                b = self._tool_button(icon, tip, cb, label)
+                if "distribute" in icon and n < 3:
+                    b.set_sensitive(False)
+                bar.append(b)
+            g.add(bar)
+        g2 = group()
+        bar = Gtk.Box(spacing=6, homogeneous=True)
+        for icon, tip, cb, label in (
+                ("edit-copy-symbolic", "Duplicate (Ctrl+D)", self.duplicate, "Duplicate"),
+                ("go-top-symbolic", "Bring to front", lambda: self.to_end(True), "To front"),
+                ("go-bottom-symbolic", "Send to back", lambda: self.to_end(False), "To back")):
+            bar.append(self._tool_button(icon, tip, cb, label))
+        g2.add(bar)
+        delete = Gtk.Button(label=f"Delete {n} elements", halign=Gtk.Align.CENTER, margin_top=12)
+        delete.add_css_class("destructive-action")
+        delete.connect("clicked", lambda *_: self.delete())
+        g2.add(delete)
+        return [g, g2]
+
+    def _placement_group(self, el):
+        free = self.label.layout == "free"
+        if free:
+            g = group("Position", "Free layout: drag in the preview or enter exact values. "
+                                  "X is measured from the left end of the label, Y from the "
+                                  "top of the printable area.")
+        else:
+            g = group("Placement")
+
+        def on_rot(i):
+            delta = (R.ROTATIONS[i] - el.rotation) % 360
+            if delta:
+                self.rotate(delta)
+        g.add(combo_row("Rotation", ["0°", "90° clockwise", "180°", "90° counter-clockwise"],
+                        R.ROTATIONS.index(el.rotation) if el.rotation in R.ROTATIONS else 0,
+                        on_rot))
+        if not free:
+            return g
+        i = self.sel
+
+        def box(k):
+            res = self.result
+            b = res.boxes[i] if res and i < len(res.boxes) else None
+            return b[k] / R.DOTS_PER_MM if b else None
+
+        def set_x(v):
+            el.x_mm = v - self.result.x_shift / R.DOTS_PER_MM
+            self.changed()
+        auto_len = not self.label.length_mm
+        x0 = box(0)
+        xrow = spin_row("X (mm)", el.x_mm if x0 is None else x0, -500, 2000, 0.1, 2, set_x,
+                        "Automatic length: the label starts at the leftmost element"
+                        if auto_len else None)
+        yrow = spin_row("Y (mm)", el.y_mm, -30, 30, 0.1, 2, self._set(el, "y_mm"))
+        g.add(xrow)
+        g.add(yrow)
+        self.pos_rows += [(lambda: box(0), xrow), (lambda: el.y_mm, yrow)]
+        if el.kind == "text" and not el.auto_size:
+            srow = spin_row("Size (pt)", el.size, 2, 200, 0.5, 1, self._set(el, "size"),
+                            "The box follows the font size")
+            g.add(srow)
+            self.pos_rows.append((lambda: el.size, srow))
+        else:
+            title = "Width (mm)" if R.size_axis(el) == "w" else "Height (mm)"
+            hrow = spin_row(title, el.h_mm, 0.3, 30, 0.1, 2, self._set(el, "h_mm"))
+            g.add(hrow)
+            self.pos_rows.append((lambda: el.h_mm, hrow))
         bar = Gtk.Box(spacing=6, halign=Gtk.Align.END, margin_top=8)
         for label, axis in (("Center horizontally", "h"), ("Center vertically", "v")):
             b = Gtk.Button(label=label)
@@ -1058,7 +1432,7 @@ class MainWindow(Adw.ApplicationWindow):
         g2.add(frow)
 
         size_row = spin_row("Size (pt)", el.size, 2, 200, 0.5, 1, self._set(el, "size"))
-        self.pos_rows.append(("size", size_row))
+        self.pos_rows.append((lambda: el.size, size_row))
         size_row.set_sensitive(not el.auto_size)
         fit_row = switch_row("Fit to visible glyphs", el.fit_glyphs, self._set(el, "fit_glyphs"),
                              "Maximise ink height instead of line height")
@@ -1216,8 +1590,10 @@ class MainWindow(Adw.ApplicationWindow):
                            lambda i: self._set(lab, "content_align")(ALIGN[i]))
         al_row.set_sensitive(lab.length_mm > 0)
         g2.add(al_row)
-        g2.add(spin_row("End padding (mm)", lab.pad_mm, 0, 50, 0.5, 1, self._set(lab, "pad_mm"),
-                        "Space at the left and right ends"))
+        g2.add(spin_row("Start padding (mm)", lab.pad_start_mm, 0, 50, 0.5, 1,
+                        self._set(lab, "pad_start_mm"), "Blank space before the first element"))
+        g2.add(spin_row("End padding (mm)", lab.pad_end_mm, 0, 50, 0.5, 1,
+                        self._set(lab, "pad_end_mm"), "Blank space after the last element"))
         g2.add(spin_row("Gap between elements (mm)", lab.gap_mm, 0, 50, 0.5, 1, self._set(lab, "gap_mm")))
         g2.add(spin_row("Vertical padding (mm)", lab.v_pad_mm, 0, 5, 0.1, 1, self._set(lab, "v_pad_mm")))
 
@@ -1459,6 +1835,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.path = None
         self.dirty = False
         self.sel = 0
+        self.selected = set()
         self.counter_start = 1
         self.rebuild_all()
         self.reset_history()
@@ -1496,6 +1873,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.path = path
         self.dirty = False
         self.sel = 0
+        self.selected = set()
         self.auto_tape = False
         self.rebuild_all()
         self.reset_history()
@@ -1574,6 +1952,11 @@ class MainWindow(Adw.ApplicationWindow):
 class App(Adw.Application):
     def __init__(self):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.HANDLES_OPEN)
+
+    def do_startup(self):
+        Adw.Application.do_startup(self)
+        here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
+        Gtk.IconTheme.get_for_display(Gdk.Display.get_default()).add_search_path(here)
 
     def do_activate(self):
         MainWindow(self).present()

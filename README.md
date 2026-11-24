@@ -26,6 +26,12 @@ Supported tapes are TZe tapes 3.5, 6, 9, 12, 18 and 24 mm wide.
     Elements snap to the tape centre and edges and to other elements; hold Shift to turn snapping off.
     Arrow keys nudge (Shift = 1 mm), Delete removes, and the right-click menu has front/back and centring.
   - The first drag switches a label to free layout without moving anything.
+- **Rotation** in 90° steps (Ctrl+R / Ctrl+Shift+R), in either layout.
+  Rotated auto-size text fits its length to the tape, which suits vertical labels.
+- **Multi-select:** Ctrl/Shift+click, drag a box, or Ctrl+A.
+  - Move several elements together.
+  - Align left, centre, right, top, middle or bottom; distribute three or more evenly.
+  - A single element is aligned to the label.
 - **Undo/redo** with Ctrl+Z and Ctrl+Shift+Z.
 - **Text:**
   - any installed font and face;
@@ -35,7 +41,8 @@ Supported tapes are TZe tapes 3.5, 6, 9, 12, 18 and 24 mm wide.
 - **Label options:**
   - borders: rectangle, rounded or double;
   - inverted (white-on-black) printing;
-  - fixed or automatic length, padding and gaps.
+  - fixed or automatic length;
+  - separate start and end padding, and the gap between elements.
 - **Variables:** `{date}`, `{time}`, `{datetime}`, `{date:%d.%m.%Y}`, and the serial number `{n}` / `{n:03d}`, which increases with each copy.
 - **Printer integration:**
   - live printer status: tape width, type, colours and errors;

@@ -134,13 +134,52 @@ class FreeLayoutTest(unittest.TestCase):
     def test_move_and_auto_length(self):
         lab = self._label()
         R.freeze_layout(lab, R.render(lab))
-        lab.elements[0].x_mm += 10
+        lab.elements[1].x_mm += 10
         res = R.render(lab)
-        self.assertEqual(res.boxes[0][0], round(R.mm(lab.elements[0].x_mm)))
+        self.assertEqual(res.boxes[1][0], round(R.mm(lab.elements[1].x_mm)) + res.x_shift)
         # moving the last element further right makes an automatic label longer
         before = res.length_dots
         lab.elements[-1].x_mm += 20
         self.assertGreater(R.render(lab).length_dots, before)
+
+    def test_auto_length_trims_to_start_padding(self):
+        lab = self._label()
+        lab.pad_start_mm, lab.pad_end_mm = 1.0, 5.0
+        R.freeze_layout(lab, R.render(lab))
+        for el in lab.elements:          # move everything 15 mm to the right
+            el.x_mm += 15
+        res = R.render(lab)
+        start = res.frame + R.mm(1.0)
+        self.assertEqual(min(b[0] for b in res.boxes), round(start))
+        right = max(b[0] + b[2] for b in res.boxes)
+        self.assertAlmostEqual(res.length_dots - right, res.frame + R.mm(5.0), delta=1)
+
+    def test_start_and_end_padding_in_flow(self):
+        lab = R.Label(pad_start_mm=1.0, pad_end_mm=6.0, elements=[R.TextElement(text="x")])
+        res = R.render(lab)
+        x, _, w, _ = res.boxes[0]
+        self.assertEqual(x, round(R.mm(1.0)))
+        self.assertAlmostEqual(res.length_dots - (x + w), R.mm(6.0), delta=1)
+
+    def test_old_files_keep_padding(self):
+        lab = R.Label.from_json('{"pad_mm": 4.0, "elements": []}')
+        self.assertEqual((lab.pad_start_mm, lab.pad_end_mm), (4.0, 4.0))
+
+    def test_rotation(self):
+        lab = R.Label(tape_width=24, elements=[R.TextElement(text="Vertical", rotation=90)])
+        res = R.render(lab)
+        x, y, w, h = res.boxes[0]
+        self.assertGreater(h, w)                     # tall box
+        self.assertLessEqual(h, res.content_height)  # auto-size fits the length to the tape
+        for rot in (90, 180, 270):
+            lab = self._label()
+            for el in lab.elements:
+                el.rotation = rot
+            before = R.render(lab)
+            R.freeze_layout(lab, before)
+            after = R.render(lab)
+            self.assertEqual(before.boxes, after.boxes, rot)
+            self.assertEqual(list(before.bitmap.getdata()), list(after.bitmap.getdata()), rot)
 
     def test_resize_changes_height(self):
         lab = R.Label(layout="free", elements=[R.QRElement(data="x", h_mm=4.0)])
