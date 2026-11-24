@@ -39,6 +39,8 @@ BORDER_NAMES = ["None", "Rectangle", "Rounded", "Double"]
 EC = ["L", "M", "Q", "H"]
 EC_NAMES = ["Low (7%)", "Medium (15%)", "Quartile (25%)", "High (30%)"]
 
+PREVIEW_MAX_H = 380   # max height of the preview area in pixels
+
 VAR_HELP = ("Variables: {date}  {time}  {datetime}  {date:%d.%m.%Y}  "
             "{n}  {n:03d} (serial number, increases per copy)")
 
@@ -828,7 +830,7 @@ class MainWindow(Adw.ApplicationWindow):
         psw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         psw.set_min_content_height(170)
         psw.set_propagate_natural_height(True)
-        psw.set_max_content_height(380)
+        psw.set_max_content_height(PREVIEW_MAX_H)
         frame = Gtk.Frame(margin_start=12, margin_end=12)
         frame.add_css_class("view")
         frame.set_child(psw)
@@ -1869,9 +1871,15 @@ class MainWindow(Adw.ApplicationWindow):
         res = self.preview.result
         if not self.auto_zoom or res is None:
             return
+        # fit the whole cut piece (label + feed margins) and the rulers into the
+        # visible preview area, both horizontally and vertically
+        p = self.preview
         vw = self.psw.get_width() or 1100
-        z = (vw - 2 * Preview.PAD - 8) / max(1, res.length_dots)
-        z = max(1.0, min(6.0, z))
+        avail_w = vw - p.PAD_L - p.PAD - 4
+        avail_h = PREVIEW_MAX_H - p.TOP - 36 - 4
+        z_w = avail_w / max(1, res.length_dots + 2 * p.feed())
+        z_h = avail_h / max(1, p.tape_height())
+        z = max(0.5, min(z_w, z_h, 10.0))
         self._zooming = True
         self.zoom_scale.set_value(z)
         self._zooming = False
